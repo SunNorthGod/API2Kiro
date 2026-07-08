@@ -2,7 +2,7 @@
   "name": "api2kiro",
   "displayName": "API2Kiro",
   "description": "把 Anthropic 端点格式的中转站 API 接入 Kiro：自定义中转地址与 Key、查询用量、监控缓存命中率。",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "publisher": "api2kiro",
   "license": "MIT",
   "engines": {

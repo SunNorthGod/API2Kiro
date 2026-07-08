@@ -248,7 +248,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <div id="usageBody">
       <div class="grid">
         <div class="stat"><div class="t">总请求数</div><div class="v" id="uReq">--</div></div>
-        <div class="stat"><div class="t">总费用</div><div class="v cost" id="uCost">--</div></div>
+        <div class="stat"><div class="t">总消耗</div><div class="v cost" id="uCost">--</div></div>
         <div class="stat"><div class="t">输入 Tokens</div><div class="v" id="uIn">--</div></div>
         <div class="stat"><div class="t">输出 Tokens</div><div class="v" id="uOut">--</div></div>
       </div>
@@ -301,7 +301,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   const $ = (id) => document.getElementById(id);
   let toastTimer = 0;
   const fmt = (n) => (Number(n) || 0).toLocaleString('en-US');
-  const usd = (n) => '$' + (Number(n) || 0).toFixed(4);
+  const credits = (n) => (Number(n) || 0).toFixed(2) + ' credits';
   const pct = (x) => (x * 100).toFixed(1) + '%';
   const show = (el, on) => el.classList.toggle('hidden', !on);
 
@@ -366,14 +366,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
       if (m.name) { $('acctName').textContent = m.name; show($('acctName'), true); }
       $('uReq').textContent = fmt(m.totalRequests);
-      $('uCost').textContent = usd(m.totalCost);
+      $('uCost').textContent = credits(m.totalCredits);
       $('uIn').textContent = fmt(m.totalInputTokens);
       $('uOut').textContent = fmt(m.totalOutputTokens);
-      // spending limit
-      if (m.spendingLimit != null && Number(m.spendingLimit) > 0) {
-        const used = Number(m.totalCost) || 0, lim = Number(m.spendingLimit);
+      // credit limit
+      if (m.creditLimit != null && Number(m.creditLimit) > 0) {
+        const used = Number(m.totalCredits) || 0, lim = Number(m.creditLimit);
         const p = Math.min(100, Math.round(used / lim * 100));
-        $('uLimit').textContent = usd(used) + ' / ' + usd(lim) + ' (' + p + '%)';
+        $('uLimit').textContent = credits(used) + ' / ' + credits(lim) + ' (' + p + '%)';
         $('uBar').style.width = p + '%';
         $('uBar').style.background = p >= 90 ? 'var(--red)' : p >= 70 ? 'var(--yellow)' : 'var(--green)';
         show($('limitRow'), true);
@@ -382,7 +382,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // by model
       const wrap = $('byModel');
       wrap.innerHTML = '';
-      const list = Array.isArray(m.byModel) ? m.byModel.slice().sort((a,b)=>(b.cost||0)-(a.cost||0)) : [];
+      const list = Array.isArray(m.byModel) ? m.byModel.slice().sort((a,b)=>(b.credits||0)-(a.credits||0)) : [];
       show($('byModelWrap'), list.length > 0);
       for (const mm of list) {
         const div = document.createElement('div');
@@ -393,7 +393,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         left.querySelector('.msub').textContent = fmt(mm.requests) + ' 次 · ' + fmt(mm.inputTokens) + ' in / ' + fmt(mm.outputTokens) + ' out';
         const right = document.createElement('div');
         right.className = 'mcost';
-        right.textContent = usd(mm.cost);
+        right.textContent = credits(mm.credits);
         div.appendChild(left); div.appendChild(right);
         wrap.appendChild(div);
       }

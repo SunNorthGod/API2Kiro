@@ -8,6 +8,8 @@ export interface RelayModelUsage {
   inputTokens: number;
   outputTokens: number;
   cost: number;
+  /** Real Kiro credits for this model (derived from cost when the relay doesn't provide it). */
+  credits: number;
 }
 
 export interface RelayCacheStats {
@@ -32,12 +34,14 @@ export interface RelayUsage {
   ok: boolean;
   source?: "kiro2cc" | "billing";
   name?: string;
-  spendingLimit?: number | null; // null = unlimited
+  /** Credit limit (null = unlimited). The relay now bills exclusively in Kiro credits. */
+  creditLimit?: number | null;
   expiresAt?: string | null; // RFC3339
   totalRequests?: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
-  totalCost?: number;
+  /** Total real Kiro credits consumed. */
+  totalCredits?: number;
   byModel?: RelayModelUsage[];
   cache?: RelayCacheStats; // authoritative cache stats from server records
   errorMessage?: string;
@@ -97,24 +101,38 @@ async function fetchKiro2ccUsage(): Promise<RelayUsage> {
     fetchCacheStats(),
   ]);
   const byModel = Array.isArray(data.byModel)
-    ? (data.byModel as Record<string, unknown>[]).map((m) => ({
-        model: String(m.model ?? ""),
-        requests: Number(m.requests) || 0,
-        inputTokens: Number(m.inputTokens) || 0,
-        outputTokens: Number(m.outputTokens) || 0,
-        cost: Number(m.cost) || 0,
-      }))
+    ? (data.byModel as Record<string, unknown>[]).map((m) => {
+        const cost = Number(m.cost) || 0;
+        return {
+          model: String(m.model ?? ""),
+          requests: Number(m.requests) || 0,
+          inputTokens: Number(m.inputTokens) || 0,
+          outputTokens: Number(m.outputTokens) || 0,
+          cost,
+          // Relay bills in credits; derive from cost when a per-model credits field is absent.
+          credits: m.credits != null ? Number(m.credits) : cost / 0.72,
+        };
+      })
     : [];
+  // Prefer the authoritative credits fields; fall back to deriving from cost for older relays.
+  const totalCredits =
+    data.totalCredits != null ? Number(data.totalCredits) : (Number(data.totalCost) || 0) / 0.72;
+  const creditLimit =
+    data.creditLimit != null
+      ? Number(data.creditLimit)
+      : data.spendingLimit != null
+        ? Number(data.spendingLimit)
+        : null;
   return {
     ok: true,
     source: "kiro2cc",
     name: typeof data.name === "string" ? data.name : undefined,
-    spendingLimit: data.spendingLimit == null ? null : Number(data.spendingLimit),
+    creditLimit,
     expiresAt: typeof data.expiresAt === "string" ? data.expiresAt : null,
     totalRequests: Number(data.totalRequests) || 0,
     totalInputTokens: Number(data.totalInputTokens) || 0,
     totalOutputTokens: Number(data.totalOutputTokens) || 0,
-    totalCost: Number(data.totalCost) || 0,
+    totalCredits,
     byModel,
     cache,
   };
@@ -150,8 +168,8 @@ async function fetchBillingUsage(subPath: string): Promise<RelayUsage> {
   return {
     ok: true,
     source: "billing",
-    totalCost: usedUsd,
-    spendingLimit: spendingLimit > 0 ? spendingLimit : null,
+    totalCredits: usedUsd,
+    creditLimit: spendingLimit > 0 ? spendingLimit : null,
     expiresAt: accessUntil > 0 ? new Date(accessUntil * 1000).toISOString() : null,
   };
 }

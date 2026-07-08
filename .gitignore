@@ -6,4 +6,13 @@ _selftest/
 _probe/
 *.log
 .DS_Store
+
+# 设计图原图（打码版在 assets/panel.png）
 样式图.png
+
+# 第三方项目源码（TsinHzl/kiro2cc-proxy），不随本仓库分发
+kiro2cc-proxy/
+
+# 拼车服务的私有文件（含真实中转站域名/配置，切勿公开）
+opencode.jsonc
+使用教程.md
