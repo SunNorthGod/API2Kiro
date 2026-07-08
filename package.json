@@ -1,0 +1,204 @@
+{
+  "name": "api2kiro",
+  "displayName": "API2Kiro",
+  "description": "把 Anthropic 端点格式的中转站 API 接入 Kiro：自定义中转地址与 Key、查询用量、监控缓存命中率。",
+  "version": "1.5.0",
+  "publisher": "api2kiro",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "*"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "api2kiro.focusSidebar",
+        "title": "打开控制面板",
+        "category": "API2Kiro",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "api2kiro.refreshUsage",
+        "title": "刷新用量 / 缓存命中率",
+        "category": "API2Kiro"
+      },
+      {
+        "command": "api2kiro.setApiKey",
+        "title": "设置 API Key",
+        "category": "API2Kiro"
+      },
+      {
+        "command": "api2kiro.setBaseUrl",
+        "title": "设置中转站地址",
+        "category": "API2Kiro"
+      },
+      {
+        "command": "api2kiro.toggleEnabled",
+        "title": "启用 / 关闭代理",
+        "category": "API2Kiro"
+      },
+      {
+        "command": "api2kiro.openLog",
+        "title": "打开调试日志",
+        "category": "API2Kiro"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "api2kiro",
+          "title": "API2Kiro",
+          "icon": "$(rocket)"
+        }
+      ]
+    },
+    "views": {
+      "api2kiro": [
+        {
+          "type": "webview",
+          "id": "api2kiro.panel",
+          "name": "控制面板"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "API2Kiro",
+      "properties": {
+        "api2kiro.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用代理。关闭后 Kiro 会恢复走官方端点。"
+        },
+        "api2kiro.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "中转站地址（Anthropic 端点格式）。例如 https://your-relay.com/v1 或 https://your-relay.com（会自动补 /v1）。"
+        },
+        "api2kiro.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "中转站 API Key（形如 sk-xxxx）。"
+        },
+        "api2kiro.port": {
+          "type": "number",
+          "default": 19800,
+          "description": "本地运行时代理端口（KRS）。多个 Kiro 窗口共用同一端口：先启动的窗口作为主实例服务所有窗口，其余待命并在主实例退出后自动接管。仅当该端口被其它程序占用时才需修改（改后所有窗口需保持一致）。"
+        },
+        "api2kiro.cpsPort": {
+          "type": "number",
+          "default": 19801,
+          "description": "本地控制面代理端口（CPS）。多窗口共用，规则同上。"
+        },
+        "api2kiro.maxTokens": {
+          "type": "number",
+          "default": 32000,
+          "description": "向上游请求的最大输出 token 数。"
+        },
+        "api2kiro.thinking": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "enabled",
+            "disabled"
+          ],
+          "default": "auto",
+          "description": "扩展思考（extended thinking）模式。auto 表示按模型名是否含 thinking 自动决定。"
+        },
+        "api2kiro.thinkingBudget": {
+          "type": "number",
+          "default": 8192,
+          "description": "开启扩展思考时的 token 预算（未选择 effort 档位时使用）。"
+        },
+        "api2kiro.effortMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "modelVariant",
+            "thinkingBudget",
+            "off"
+          ],
+          "default": "auto",
+          "description": "Kiro 思考档位（max/xhigh/high/medium/low）的处理方式。auto：中转站有 model-档位 变体时切换变体，否则把档位映射为 thinking 预算（同模型，安全无副作用）；modelVariant：优先切到 model-档位 变体，没有就切到中转站的 model-thinking 思考模型（本中转站的思考开关），并按档位设预算；thinkingBudget：始终把档位映射为 thinking 预算；off：关闭档位选择器。注：本中转站不会回传思考过程文本。"
+        },
+        "api2kiro.effortBudgets": {
+          "type": "object",
+          "default": {
+            "low": 2048,
+            "medium": 4096,
+            "high": 8192,
+            "xhigh": 16384,
+            "max": 24576
+          },
+          "description": "各思考档位对应的 thinking 预算（token），会被自动限制在 max_tokens 以内。仅在按预算映射时使用。"
+        },
+        "api2kiro.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "当 Kiro 内部模型 ID 不在映射表中时使用的兜底上游模型 ID（例如 claude-opus-4-8）。留空则透传原始 ID。"
+        },
+        "api2kiro.modelMapping": {
+          "type": "object",
+          "default": {},
+          "description": "把 Kiro 内部模型 ID 映射到上游模型 ID。例如 {\"CLAUDE_SONNET_4_5_20250929_V1_0\": \"claude-sonnet-4-5\"}。"
+        },
+        "api2kiro.interceptIntentClassifier": {
+          "type": "boolean",
+          "default": true,
+          "description": "本地拦截 Kiro 的意图分类（simple-task）请求，节省一次上游调用。"
+        },
+        "api2kiro.usagePath": {
+          "type": "string",
+          "default": "",
+          "description": "留空（推荐）：使用 kiro2cc-proxy 面板接口 /api/user/usage 拉取真实用量（请求数、token、费用、按模型分组）。若你的中转站是 OpenAI/New-API 风格，可填其额度接口路径（如 /v1/dashboard/billing/subscription）走计费查询。"
+        },
+        "api2kiro.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "把请求/响应写入调试日志文件（Key 会脱敏）。"
+        },
+        "codewhisperer.config.krsEndpoints": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "description": "内部项：由 API2Kiro 自动管理，用于把 Kiro 的 AI 运行时请求重定向到本地代理。请勿手动编辑。"
+        },
+        "codewhisperer.config.cpsEndpoints": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "description": "内部项：由 API2Kiro 自动管理的控制面端点重定向。请勿手动编辑。"
+        },
+        "codewhisperer.config.endpoints": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "description": "内部项：由 API2Kiro 自动管理的通用端点重定向（Kiro 1.0+）。请勿手动编辑。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./tsconfig.json --noEmit",
+    "bundle": "node esbuild.js",
+    "package": "node esbuild.js && npx @vscode/vsce package --allow-star-activation --skip-license --allow-missing-repository --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.5.0"
+  }
+}

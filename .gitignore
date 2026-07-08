@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.vsix
+_ref/
+_selftest/
+_probe/
+*.log
+.DS_Store
+样式图.png
