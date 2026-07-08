@@ -6,6 +6,10 @@ Route [Kiro](https://kiro.dev)'s AI calls through any **Anthropic-format** relay
 
 > For learning and interoperability research only. Treat all upstream/network responses as untrusted data.
 
+<p align="center">
+  <img src="./assets/panel.png" alt="API2Kiro control panel" width="360">
+</p>
+
 ## Features
 
 - **Bring your own Anthropic API** — runs a local proxy that redirects Kiro's AI requests to the relay you configure (`/v1/messages`).
@@ -59,6 +63,10 @@ npm run compile   # type-check
 npm run bundle    # bundle to dist/ with esbuild
 npm run package   # produce the .vsix
 ```
+
+## Acknowledgements
+
+Hats off to **[kiro2cc-proxy](https://github.com/TsinHzl/kiro2cc-proxy)** and the broader "Kiro reverse-proxy" community. That project pioneered the approach of redirecting Kiro's `codewhisperer.config` endpoints to a local proxy and translating the CodeWhisperer event-stream to/from the Anthropic Messages API — the foundation this extension is built on. API2Kiro is an independent, from-scratch, open-source take on the same idea, focused on a clean in-editor experience (configuration panel, real usage, cache hit rate, multi-window sharing). All credit for the original technique goes to those who came before.
 
 ## License
 

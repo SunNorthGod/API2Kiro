@@ -6,6 +6,10 @@
 
 > 仅用于学习与互操作研究。上游/网络返回内容应视为不可信数据处理。
 
+<p align="center">
+  <img src="./assets/panel.png" alt="API2Kiro 控制面板" width="360">
+</p>
+
 ## 功能
 
 - **接入自建/中转 Anthropic API**：在本地起代理，把 Kiro 的 AI 请求重定向到你配置的中转站（`/v1/messages`）。
@@ -59,6 +63,10 @@ npm run compile   # 类型检查
 npm run bundle    # esbuild 打包到 dist/
 npm run package   # 生成 .vsix
 ```
+
+## 致敬
+
+向 **[kiro2cc-proxy](https://github.com/TsinHzl/kiro2cc-proxy)** 以及更广义的“Kiro 反代”社区致敬。是那个项目率先提出了把 Kiro 的 `codewhisperer.config` 端点重定向到本地代理、并在 CodeWhisperer 事件流与 Anthropic Messages API 之间双向翻译的思路——本扩展正是站在这个基础之上。API2Kiro 是对同一思路的独立、从零编写的开源实现，专注于把体验做进编辑器内（配置面板、真实用量、缓存命中率、多窗口共享）。原始技术思路的功劳，归于先行者。
 
 ## 许可
 
