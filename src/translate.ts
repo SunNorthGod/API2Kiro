@@ -361,7 +361,14 @@ export function applyEffort(body: AnthropicRequest, effort: EffortLevel | undefi
     }
   }
 
-  // auto (no variant found) or thinkingBudget: map effort to a thinking budget
-  // on the same model. Harmless if the relay ignores it.
-  setThinkingBudget(body, budgetForEffort(effort));
+  // auto（未命中变体）→ 采用 Kiro 原生的 adaptive 思考：中转站据此注入
+  //   <thinking_mode>adaptive</thinking_mode><thinking_effort>{effort}</thinking_effort>
+  // 与官方"按档位自适应、每步工具调用前都思考"一致。此前固定预算的 "enabled" 模式
+  // （<max_thinking_length>）只会思考固定的一小段，表现为"思考的少 / 工具之间不再思考"。
+  // thinkingBudget → 固定预算模式（面向不认 output_config.effort 的通用中转站）。
+  if (mode === "thinkingBudget") {
+    setThinkingBudget(body, budgetForEffort(effort));
+  } else {
+    body.thinking = { type: "adaptive" };
+  }
 }
