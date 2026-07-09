@@ -73,11 +73,24 @@ export function effortFromRequest(req: CwRequest): EffortLevel | undefined {
 
 /**
  * Resolve the effort level for a request: prefer the value embedded in the
- * request; fall back to Kiro's current effort-level command if available.
+ * request; fall back to Kiro's current effort-level command; finally fall back
+ * to the last-known effort for this conversation.
+ *
+ * The per-conversation cache is important for extended "think a step, act a
+ * step": tool-continuation turns may omit output_config.effort, and the
+ * getEffortLevel command isn't available on every Kiro build. Without the
+ * cache, thinking effort would silently drop on later turns of an agent loop.
  */
+const effortCache = new Map<string, EffortLevel>();
+
 export async function getSelectedEffort(req: CwRequest): Promise<EffortLevel | undefined> {
+  const convId = req?.conversationState?.conversationId || "";
+
   const fromReq = effortFromRequest(req);
   if (fromReq) {
+    if (convId) {
+      effortCache.set(convId, fromReq);
+    }
     return fromReq;
   }
   try {
@@ -85,10 +98,18 @@ export async function getSelectedEffort(req: CwRequest): Promise<EffortLevel | u
     const e = normEffort(v);
     if (e) {
       debug("effort from command", e);
+      if (convId) {
+        effortCache.set(convId, e);
+      }
       return e;
     }
   } catch {
     /* command unavailable on this Kiro build */
+  }
+  if (convId && effortCache.has(convId)) {
+    const cached = effortCache.get(convId);
+    debug("effort from conversation cache", cached);
+    return cached;
   }
   return undefined;
 }

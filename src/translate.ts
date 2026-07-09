@@ -41,6 +41,10 @@ export interface AnthropicRequest {
   stream: boolean;
   tools?: AnthropicTool[];
   thinking?: ThinkingConfig;
+  /** Reasoning-effort level (low/medium/high/xhigh/max). The relay maps this to
+   *  the CodeWhisperer output_config.effort + <thinking_effort> so the user's
+   *  chosen tier (e.g. max) actually reaches the backend instead of defaulting. */
+  output_config?: { effort: string };
 }
 
 /** Find the most recent modelId Kiro attached to any user message. */
@@ -329,6 +333,12 @@ export function applyEffort(body: AnthropicRequest, effort: EffortLevel | undefi
   if (mode === "off") {
     return;
   }
+
+  // Always convey the effort LEVEL to the relay (it maps this to the CW
+  // output_config.effort + <thinking_effort> tag). Without this the relay
+  // defaults to "high", silently downgrading the user's chosen tier (e.g. max),
+  // which is why extended "think a step, act a step" was weaker than native Kiro.
+  body.output_config = { effort };
 
   const base = body.model;
 

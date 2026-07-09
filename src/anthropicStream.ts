@@ -7,11 +7,22 @@ export interface CapturedUsage {
   cacheCreationTokens: number;
 }
 
-const FALLBACK_CONTEXT_WINDOW = 500000;
+const FALLBACK_CONTEXT_WINDOW = 200000;
 
-/** Rough context window per model family; only used for the context-usage bar. */
+/** Context window per model, aligned to Kiro/Anthropic official. Only used for the context-usage bar. */
 function contextWindowForModel(modelId: string): number {
   const m = (modelId || "").toLowerCase();
+  // 1M 上下文窗口：Opus 4.8/4.7、Sonnet 4.6、Sonnet 5、Fable 5
+  if (
+    m.includes("opus-4-8") || m.includes("opus-4.8") ||
+    m.includes("opus-4-7") || m.includes("opus-4.7") ||
+    m.includes("sonnet-4-6") || m.includes("sonnet-4.6") ||
+    m.includes("sonnet-5") ||
+    m.includes("fable-5") || m.includes("fable5")
+  ) {
+    return 1000000;
+  }
+  // 其余 Claude（Opus 4.6/4.5、Sonnet 4.5/4、Haiku 等）为 200K
   if (m.includes("opus") || m.includes("sonnet") || m.includes("haiku") || m.includes("claude")) {
     return 200000;
   }

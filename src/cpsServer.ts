@@ -72,7 +72,7 @@ export class CpsProxyServer {
       const model: CpsModel = {
         modelId: g.baseId,
         modelName: g.name || g.baseId,
-        description: "",
+        description: g.description || "",
         promptCaching: {
           maximumCacheCheckpointsPerRequest: 4,
           minimumTokensPerCacheCheckpoint: 1024,

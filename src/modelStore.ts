@@ -6,6 +6,7 @@ export interface RelayModel {
   id: string;
   name: string;
   contextWindow?: number;
+  description?: string;
 }
 
 export interface EffortGroup {
@@ -13,6 +14,7 @@ export interface EffortGroup {
   name: string;
   efforts: Set<string>;
   maxInputTokens?: number;
+  description?: string;
 }
 
 export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -78,6 +80,7 @@ export async function fetchRelayModels(force = false): Promise<RelayModel[]> {
           id,
           name: String(x.display_name || x.name || x.modelName || id),
           contextWindow: parseContextWindow(x),
+          description: typeof x.description === "string" ? x.description : undefined,
         } as RelayModel;
       });
 
@@ -158,6 +161,9 @@ export function groupModelsByEffort(models: RelayModel[]): EffortGroup[] {
       const g = ensure(m.id, m);
       if (m.name) {
         g.name = m.name;
+      }
+      if (m.description) {
+        g.description = m.description;
       }
     }
   }
