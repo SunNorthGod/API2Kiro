@@ -98,6 +98,10 @@ export class KrsProxyServer {
 
         if (isGenerate) {
           await this.handleGenerate(res, body);
+        } else if (method === "POST" && this.looksLikeJsonRpc(body)) {
+          // Kiro 的 InvokeMCPCommand（服务端 MCP 工具发现）走的是流式客户端端点，
+          // 会被路由到这里。本地就地应答一个合法的 JSON-RPC 结果。
+          this.handleMcpJsonRpc(res, body);
         } else {
           info("KRS unhandled:", method, path);
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -114,6 +118,74 @@ export class KrsProxyServer {
         res.end(JSON.stringify({ __type: "InternalServerException", message: (e as Error).message }));
       }
     });
+  }
+
+  /** Heuristic: Kiro's InvokeMCPCommand body is JSON-RPC ({"jsonrpc","method",...}). */
+  private looksLikeJsonRpc(body: string): boolean {
+    return body.indexOf('"jsonrpc"') !== -1 && body.indexOf('"method"') !== -1;
+  }
+
+  /**
+   * Answer Kiro's server-side MCP discovery (InvokeMCPCommand) locally.
+   *
+   * Kiro routes CodeWhisperer streaming-client commands (including InvokeMCPCommand)
+   * to the runtime endpoint, which this proxy now owns. Against a real AWS backend
+   * that call returns the backend's hosted MCP tools; against a third-party relay
+   * there are none. Returning `{}` is invalid JSON-RPC and makes Kiro's
+   * RemoteToolsDiscovery fail (the agent then looks like it has no tools). Kiro's
+   * file/terminal capabilities are client-side (ACP) and unaffected, so we reply
+   * with a *valid* JSON-RPC result advertising no remote tools — discovery then
+   * succeeds cleanly and the local tools remain available.
+   */
+  private handleMcpJsonRpc(res: http.ServerResponse, rawBody: string): void {
+    let id: unknown = null;
+    let rpcMethod = "";
+    try {
+      const parsed = JSON.parse(rawBody);
+      id = parsed?.id ?? null;
+      rpcMethod = typeof parsed?.method === "string" ? parsed.method : "";
+    } catch {
+      /* fall through to a generic empty result */
+    }
+
+    info("KRS MCP:", rpcMethod || "(unparsed)");
+
+    // JSON-RPC notifications carry no id and expect no response body.
+    if (id === null || id === undefined) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end("");
+      return;
+    }
+
+    const version = this.context.extension.packageJSON.version || "0.0.0";
+    let result: unknown;
+    switch (rpcMethod) {
+      case "initialize":
+        result = {
+          protocolVersion: "2024-11-05",
+          capabilities: { tools: {} },
+          serverInfo: { name: "api2kiro", version },
+        };
+        break;
+      case "tools/list":
+        result = { tools: [] };
+        break;
+      case "prompts/list":
+        result = { prompts: [] };
+        break;
+      case "resources/list":
+        result = { resources: [] };
+        break;
+      case "resources/templates/list":
+        result = { resourceTemplates: [] };
+        break;
+      default:
+        result = {};
+        break;
+    }
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
   }
 
   private beginEventStream(res: http.ServerResponse): void {
