@@ -1,4 +1,5 @@
 import { CwEvent } from "./cwTypes";
+import { contextWindowForModel as relayContextWindow } from "./modelStore";
 
 export interface CapturedUsage {
   inputTokens: number;
@@ -9,20 +10,31 @@ export interface CapturedUsage {
 
 const FALLBACK_CONTEXT_WINDOW = 200000;
 
-/** Context window per model, aligned to Kiro/Anthropic official. Only used for the context-usage bar. */
+/**
+ * Context window for the context-usage bar. Prefers the relay's /models
+ * `context_window` (authoritative and identical to the model list Kiro's picker
+ * shows, so one source of truth drives both). Falls back to a name heuristic
+ * aligned to Kiro's official ListAvailableModels, then 200K.
+ */
 function contextWindowForModel(modelId: string): number {
+  const fromRelay = relayContextWindow(modelId);
+  if (fromRelay && fromRelay > 0) {
+    return fromRelay;
+  }
   const m = (modelId || "").toLowerCase();
-  // 1M 上下文窗口：Opus 4.8/4.7、Sonnet 4.6、Sonnet 5、Fable 5
+  // 1M 上下文（对齐 Kiro 官方 ListAvailableModels）：auto、Opus 4.8/4.7/4.6、Sonnet 4.6/5、Fable 5
   if (
+    m === "auto" ||
     m.includes("opus-4-8") || m.includes("opus-4.8") ||
     m.includes("opus-4-7") || m.includes("opus-4.7") ||
+    m.includes("opus-4-6") || m.includes("opus-4.6") ||
     m.includes("sonnet-4-6") || m.includes("sonnet-4.6") ||
     m.includes("sonnet-5") ||
     m.includes("fable-5") || m.includes("fable5")
   ) {
     return 1000000;
   }
-  // 其余 Claude（Opus 4.6/4.5、Sonnet 4.5/4、Haiku 等）为 200K
+  // 其余 Claude（Opus 4.5、Sonnet 4.5/4、Haiku 等）为 200K
   if (m.includes("opus") || m.includes("sonnet") || m.includes("haiku") || m.includes("claude")) {
     return 200000;
   }
