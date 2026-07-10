@@ -193,6 +193,15 @@ export class AnthropicStreamConverter {
 
     if (ev.type === "message_delta" && ev.usage) {
       this.captureUsage(ev.usage);
+      // 关键：优先采用中转站转发的「后端真实上下文占用率」(contextUsagePercentage)，
+      // 而非本地 token/窗口 估算。原因(实测)：Kiro 后端按其真实有效窗口(opus≈420K，
+      // 远小于 1M)计算占用率，并据此在客户端触发上下文摘要压缩；而本地按 1M 估算会把
+      // 占用率算低约 2~5 倍，导致 Kiro 永不触发摘要、历史无限增长，最终后端在超大上下文
+      // 下抑制思考。透传后端真实值即可让 Kiro 自身的摘要机制正常工作(无需我们复刻摘要)。
+      const relayPct = (ev.usage as Record<string, number>).contextUsagePercentage;
+      if (typeof relayPct === "number" && relayPct >= 0) {
+        this.pendingContextPct = Math.max(0, Math.min(100, relayPct));
+      }
       const inTokens =
         (ev.usage.input_tokens || 0) +
         (ev.usage.cache_read_input_tokens || 0) +
