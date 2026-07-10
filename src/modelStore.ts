@@ -7,6 +7,14 @@ export interface RelayModel {
   name: string;
   contextWindow?: number;
   description?: string;
+  /** 该模型支持的 effort 档位（中转站从 Kiro ListAvailableModels 透出，各模型不一致）。 */
+  effortLevels?: string[];
+  /** effort schema 路径：output_config 或 reasoning。 */
+  effortSchemaPath?: string;
+  /** 默认 effort 档位。 */
+  defaultEffortLevel?: string;
+  /** 最大输出 token（中转站透出，用于 CPS 模型列表 tokenLimits）。 */
+  maxOutputTokens?: number;
 }
 
 export interface EffortGroup {
@@ -15,6 +23,14 @@ export interface EffortGroup {
   efforts: Set<string>;
   maxInputTokens?: number;
   description?: string;
+  /** 中转站透出的官方 effort 档位（优先于 -variant 后缀推断）。 */
+  nativeEffortLevels?: string[];
+  /** 官方 effort schema 路径：output_config 或 reasoning。 */
+  effortSchemaPath?: string;
+  /** 官方默认 effort 档位。 */
+  defaultEffortLevel?: string;
+  /** 最大输出 token（中转站透出）。 */
+  maxOutputTokens?: number;
 }
 
 export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -76,11 +92,42 @@ export async function fetchRelayModels(force = false): Promise<RelayModel[]> {
       .filter((x) => x.id || x.modelId)
       .map((x) => {
         const id = String(x.id || x.modelId);
+        const effortLevels = Array.isArray(x.effort_levels)
+          ? (x.effort_levels as unknown[]).filter((e): e is string => typeof e === "string")
+          : Array.isArray((x as { effortLevels?: unknown }).effortLevels)
+          ? ((x as { effortLevels: unknown[] }).effortLevels).filter(
+              (e): e is string => typeof e === "string"
+            )
+          : undefined;
+        const effortSchemaPath =
+          typeof x.effort_schema_path === "string"
+            ? (x.effort_schema_path as string)
+            : typeof (x as { effortSchemaPath?: unknown }).effortSchemaPath === "string"
+            ? ((x as { effortSchemaPath: string }).effortSchemaPath)
+            : undefined;
+        const defaultEffortLevel =
+          typeof x.default_effort_level === "string"
+            ? (x.default_effort_level as string)
+            : typeof (x as { defaultEffortLevel?: unknown }).defaultEffortLevel === "string"
+            ? ((x as { defaultEffortLevel: string }).defaultEffortLevel)
+            : undefined;
+        const maxOutRaw =
+          (x.max_tokens as number) ??
+          (x.max_output_tokens as number) ??
+          (x.maxOutputTokens as number);
+        const maxOutputTokens =
+          Number.isFinite(Number(maxOutRaw)) && Number(maxOutRaw) > 0
+            ? Number(maxOutRaw)
+            : undefined;
         return {
           id,
           name: String(x.display_name || x.name || x.modelName || id),
           contextWindow: parseContextWindow(x),
           description: typeof x.description === "string" ? x.description : undefined,
+          effortLevels: effortLevels && effortLevels.length > 0 ? effortLevels : undefined,
+          effortSchemaPath,
+          defaultEffortLevel,
+          maxOutputTokens,
         } as RelayModel;
       });
 
@@ -164,6 +211,19 @@ export function groupModelsByEffort(models: RelayModel[]): EffortGroup[] {
       }
       if (m.description) {
         g.description = m.description;
+      }
+      // 官方 effort 信息（来自中转站 /v1/models，透传自 Kiro ListAvailableModels）
+      if (m.effortLevels && m.effortLevels.length > 0) {
+        g.nativeEffortLevels = m.effortLevels;
+      }
+      if (m.effortSchemaPath) {
+        g.effortSchemaPath = m.effortSchemaPath;
+      }
+      if (m.defaultEffortLevel) {
+        g.defaultEffortLevel = m.defaultEffortLevel;
+      }
+      if (m.maxOutputTokens && !g.maxOutputTokens) {
+        g.maxOutputTokens = m.maxOutputTokens;
       }
     }
   }

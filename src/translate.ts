@@ -318,15 +318,22 @@ export function setThinkingBudget(body: AnthropicRequest, budget: number): void 
 /**
  * Apply Kiro's selected effort level (max/xhigh/high/medium/low) to the request.
  *
- * - modelVariant / auto: if the relay exposes a `<model>-<effort>` variant, call
- *   that variant (this is how the reference plugin does it).
- * - thinkingBudget / auto: otherwise map the effort to an Anthropic extended
- *   thinking budget so the level still changes reasoning depth on any relay.
+ * 与 Kiro 官方对齐的核心：Kiro 原生**只**发 `additionalModelRequestFields =
+ * { output_config: { effort } }`（见 Kiro 客户端 We7()），既不发 `thinking`
+ * 也不发 budget_tokens，思考深度完全交给模型按 effort 自适应。因此默认（auto）
+ * 模式就**原样透传** `output_config.effort`，不再自造 `thinking:adaptive`/budget
+ * ——那套"模拟"是此前思考行为与官方对不齐、反复修不好的根因。
+ *
+ * 另外两种模式仅为兼容"不认 output_config.effort 的通用中转站"而保留，需用户显式开启：
+ * - `modelVariant`：改调中转站暴露的 `<model>-<effort>` 或 `-thinking` 变体模型。
+ * - `thinkingBudget`：把 effort 换算成 Anthropic 标准 `thinking.budget_tokens`。
  *
  * Mutates `body` in place. `effort` is the resolved level (or undefined).
  */
 export function applyEffort(body: AnthropicRequest, effort: EffortLevel | undefined): void {
   if (!effort) {
+    // Kiro 未给 effort（auto 档 / 老版本）→ 不加任何字段，让模型走默认，
+    // 与 Kiro 原生 We7() 返回 undefined 的行为一致。
     return;
   }
   const mode = getEffortMode();
@@ -334,41 +341,29 @@ export function applyEffort(body: AnthropicRequest, effort: EffortLevel | undefi
     return;
   }
 
-  // Always convey the effort LEVEL to the relay (it maps this to the CW
-  // output_config.effort + <thinking_effort> tag). Without this the relay
-  // defaults to "high", silently downgrading the user's chosen tier (e.g. max),
-  // which is why extended "think a step, act a step" was weaker than native Kiro.
+  // 透传 Kiro 原生 effort：中转站原样转发给 Kiro 后端的 output_config.effort。
   body.output_config = { effort };
 
-  const base = body.model;
-
+  // 变体模式（可选）：部分中转站用独立的 <model>-<effort> / -thinking 模型承载思考。
   if (mode === "auto" || mode === "modelVariant") {
-    // 1) Per-level variant, e.g. <model>-high (some relays expose these).
-    if (hasEffortVariant(base, effort)) {
-      body.model = `${base}-${effort}`;
+    if (hasEffortVariant(body.model, effort)) {
+      body.model = `${body.model}-${effort}`;
       return;
     }
-    // 2) modelVariant mode: fall back to the relay's dedicated -thinking model
-    //    (this relay's reasoning switch), scaling the budget by effort.
     if (mode === "modelVariant") {
-      const tv = thinkingVariantOf(base);
+      const tv = thinkingVariantOf(body.model);
       if (tv) {
         body.model = tv;
         setThinkingBudget(body, budgetForEffort(effort));
       }
-      // Variant-only mode: if nothing matches, leave the request unchanged.
       return;
     }
   }
 
-  // auto（未命中变体）→ 采用 Kiro 原生的 adaptive 思考：中转站据此注入
-  //   <thinking_mode>adaptive</thinking_mode><thinking_effort>{effort}</thinking_effort>
-  // 与官方"按档位自适应、每步工具调用前都思考"一致。此前固定预算的 "enabled" 模式
-  // （<max_thinking_length>）只会思考固定的一小段，表现为"思考的少 / 工具之间不再思考"。
-  // thinkingBudget → 固定预算模式（面向不认 output_config.effort 的通用中转站）。
+  // thinkingBudget 模式（可选，面向只认 Anthropic 标准 thinking 的通用中转站）：
+  // 把 effort 换算成固定预算。默认 auto 模式**不走这里**——纯透传 output_config，
+  // 与 Kiro 官方完全一致。
   if (mode === "thinkingBudget") {
     setThinkingBudget(body, budgetForEffort(effort));
-  } else {
-    body.thinking = { type: "adaptive" };
   }
 }

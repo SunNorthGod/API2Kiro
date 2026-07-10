@@ -82,16 +82,25 @@ export class CpsProxyServer {
         supportedInputTypes: ["TEXT", "IMAGE"],
         tokenLimits: {
           maxInputTokens: g.maxInputTokens || 200000,
-          maxOutputTokens: 64000,
+          maxOutputTokens: g.maxOutputTokens || 64000,
         },
       };
 
-      // Decide which effort levels to advertise for this model.
+      // 决定该模型对外暴露哪些 effort 档位（与 Kiro 官方对齐）：
+      // 1) 优先用中转站透出的官方 nativeEffortLevels（各模型不一致，且无 effort 的模型
+      //    根本不会带——从而 Kiro 选择器不会给它显示思考档位，彻底对齐官方）。
+      // 2) 其次 modelVariant 模式用 -<effort> 后缀变体推断。
+      // 3) 最后（通用中转站无 effort 信息时）auto/thinkingBudget 兜底暴露全档位。
       let efforts: string[] = [];
-      if (mode === "modelVariant") {
+      let schemaPath = "output_config";
+      if (g.nativeEffortLevels && g.nativeEffortLevels.length > 0) {
+        efforts = g.nativeEffortLevels;
+        if (g.effortSchemaPath) {
+          schemaPath = g.effortSchemaPath;
+        }
+      } else if (mode === "modelVariant") {
         efforts = EFFORT_LEVELS.filter((e) => g.efforts.has(e));
       } else if (mode === "auto" || mode === "thinkingBudget") {
-        // Expose the full ladder so the picker works on any relay.
         efforts = [...EFFORT_LEVELS];
       }
 
@@ -99,7 +108,7 @@ export class CpsProxyServer {
         model.additionalModelRequestFieldsSchema = {
           type: "object",
           properties: {
-            output_config: {
+            [schemaPath]: {
               type: "object",
               properties: {
                 effort: { type: "string", enum: efforts },
@@ -107,9 +116,12 @@ export class CpsProxyServer {
             },
           },
         };
-        model.defaultEffortLevel = efforts.includes(DEFAULT_EFFORT_LEVEL)
-          ? DEFAULT_EFFORT_LEVEL
-          : efforts[0];
+        model.defaultEffortLevel =
+          g.defaultEffortLevel && efforts.includes(g.defaultEffortLevel)
+            ? g.defaultEffortLevel
+            : efforts.includes(DEFAULT_EFFORT_LEVEL)
+            ? DEFAULT_EFFORT_LEVEL
+            : efforts[0];
       }
 
       return model;
