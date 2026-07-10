@@ -68,6 +68,17 @@ export interface CwToolUse {
 export interface CwAssistantResponseMessage {
   content?: string;
   toolUses?: CwToolUse[];
+  /**
+   * Kiro 原生历史里每轮 assistant 携带的推理内容。Kiro 直连 AWS 时用它延续
+   * 工具循环中的思考。形态（实测/源码 Ut6）：嵌套 `{reasoningText:{text,signature}}`，
+   * 且仅当带签名时才出现（Kiro 会 "Dropping unsigned reasoning from history"）。
+   * 少数路径可能是扁平 `reasoningContent(string)+reasoningSignature`，两者都兼容。
+   */
+  reasoningContent?:
+    | { reasoningText?: { text?: string; signature?: string } }
+    | string;
+  reasoningSignature?: string;
+  reasoningModelId?: string;
 }
 
 export interface CwHistoryItem {

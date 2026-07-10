@@ -24,9 +24,31 @@ export interface AnthropicMessage {
 
 export type AnthropicContentBlock =
   | { type: "text"; text: string }
+  | { type: "thinking"; thinking: string; signature: string }
   | { type: "tool_result"; tool_use_id: string; content: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+
+/** 从 Kiro 历史 assistant 消息里提取带签名的 thinking 块（无签名则返回 null）。 */
+function extractThinkingBlock(
+  arm: import("./cwTypes").CwAssistantResponseMessage
+): { type: "thinking"; thinking: string; signature: string } | null {
+  const rc = arm.reasoningContent;
+  let text: string | undefined;
+  let signature: string | undefined;
+  if (rc && typeof rc === "object") {
+    text = rc.reasoningText?.text;
+    signature = rc.reasoningText?.signature ?? arm.reasoningSignature;
+  } else if (typeof rc === "string") {
+    text = rc;
+    signature = arm.reasoningSignature;
+  }
+  // Anthropic 硬要求 thinking 块带签名，否则后端 400。无签名则不回传。
+  if (text && signature && text.length > 0 && signature.length > 0) {
+    return { type: "thinking", thinking: text, signature };
+  }
+  return null;
+}
 
 export interface AnthropicTool {
   name: string;
@@ -251,6 +273,14 @@ export function buildAnthropicRequest(req: CwRequest): AnthropicRequest {
     if (item.assistantResponseMessage) {
       const arm = item.assistantResponseMessage;
       const blocks: AnthropicContentBlock[] = [];
+      // 关键修复：把 Kiro 历史里带签名的推理块转成 Anthropic thinking 块，放在最前面。
+      // 这是"直连能思考、插件不思考"的根因——Kiro 直连 AWS 时历史每轮都带 reasoningContent，
+      // 让模型在工具循环中延续思考；而此前 buildAnthropicRequest 只读 content+toolUses，
+      // 把它丢了，导致后端在工具轮停止思考。thinking 块必须排在 text/tool_use 之前。
+      const thinkingBlock = extractThinkingBlock(arm);
+      if (thinkingBlock) {
+        blocks.push(thinkingBlock);
+      }
       if (arm.content) {
         blocks.push({ type: "text", text: arm.content });
       }
