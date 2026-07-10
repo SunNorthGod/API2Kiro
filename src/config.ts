@@ -47,9 +47,9 @@ export function getUsagePath(): string {
 }
 
 export interface ThinkingConfig {
-  // "adaptive"：Kiro 原生的按档位自适应思考（中转站据此注入 <thinking_effort>），
-  // 每步工具前都会思考；"enabled"：固定预算思考（budget_tokens）；"disabled"：关闭。
-  type: "enabled" | "adaptive" | "disabled";
+  // "enabled"：固定预算思考（budget_tokens，仅 thinkingBudget 模式用）；"disabled"：关闭。
+  // 注：默认 auto 模式不发 thinking，只透传 Kiro 原生 output_config.effort。
+  type: "enabled" | "disabled";
   budget_tokens?: number;
 }
 
