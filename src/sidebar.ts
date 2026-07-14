@@ -59,8 +59,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this.toast("ok", "已保存配置");
         } else {
           const detail = r1.error || r2.error || "未知错误";
-          error("保存配置写入 Kiro 设置失败(已本地兜底):", detail);
-          this.toast("error", "已本地保存,但写入 Kiro 设置失败:" + detail);
+          error("配置未写入 Kiro 设置,已用本地兜底:", detail);
+          this.toast("error", "已本地保存并生效;但未写入 Kiro 设置:" + detail);
         }
         this.postState();
         void this.refresh();

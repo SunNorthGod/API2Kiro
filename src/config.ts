@@ -36,19 +36,36 @@ export async function updateSetting(
   key: string,
   value: unknown
 ): Promise<{ settingsOk: boolean; error?: string }> {
-  try {
-    await cfg().update(key, value, vscode.ConfigurationTarget.Global);
-    // 写设置成功后清掉旧兜底,避免兜底值盖过设置
-    if (extCtx && extCtx.globalState.get(FB_PREFIX + key) !== undefined) {
-      await extCtx.globalState.update(FB_PREFIX + key, undefined);
-    }
-    return { settingsOk: true };
-  } catch (e) {
-    const error = (e as Error)?.message || String(e);
+  const setFallback = async () => {
     if (extCtx) {
       await extCtx.globalState.update(FB_PREFIX + key, value);
     }
-    return { settingsOk: false, error };
+  };
+  const clearFallback = async () => {
+    if (extCtx && extCtx.globalState.get(FB_PREFIX + key) !== undefined) {
+      await extCtx.globalState.update(FB_PREFIX + key, undefined);
+    }
+  };
+
+  try {
+    await cfg().update(key, value, vscode.ConfigurationTarget.Global);
+    // 关键:update() 不抛异常 ≠ 真的写进去了。实测某些环境(工作区作用域遮蔽、
+    // profile / Settings Sync、或 Kiro 未持久化)会 resolve 成功却不落地,导致「假成功」。
+    // 因此写完立刻回读校验:一致才算成功;不一致则退回本地兜底(readStr 优先读兜底,
+    // 保证用户填的值仍能持久化),并如实报告原因。
+    const readback = cfg().get(key);
+    if (JSON.stringify(readback) === JSON.stringify(value)) {
+      await clearFallback();
+      return { settingsOk: true };
+    }
+    await setFallback();
+    return {
+      settingsOk: false,
+      error: "写入后回读不一致(可能被工作区 .vscode/settings.json 遮蔽,或 Kiro 未持久化该设置)",
+    };
+  } catch (e) {
+    await setFallback();
+    return { settingsOk: false, error: (e as Error)?.message || String(e) };
   }
 }
 
