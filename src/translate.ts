@@ -63,10 +63,12 @@ export interface AnthropicRequest {
   stream: boolean;
   tools?: AnthropicTool[];
   thinking?: ThinkingConfig;
-  /** Reasoning-effort level (low/medium/high/xhigh/max). The relay maps this to
-   *  the CodeWhisperer output_config.effort + <thinking_effort> so the user's
-   *  chosen tier (e.g. max) actually reaches the backend instead of defaulting. */
-  output_config?: { effort: string };
+  /** Reasoning-effort level (low/medium/high/xhigh/max) + optional GPT reasoning
+   *  mode (standard/pro). The relay maps these to CodeWhisperer output_config.effort
+   *  (Claude) or upstream reasoning.{mode,effort} (GPT 5.6), so the user's chosen
+   *  tier/mode actually reaches the backend instead of defaulting. `mode` is carried
+   *  inside output_config; the relay ignores it for non-reasoning models. */
+  output_config?: { effort: string; mode?: string };
 }
 
 /** Find the most recent modelId Kiro attached to any user message. */
@@ -360,7 +362,11 @@ export function setThinkingBudget(body: AnthropicRequest, budget: number): void 
  *
  * Mutates `body` in place. `effort` is the resolved level (or undefined).
  */
-export function applyEffort(body: AnthropicRequest, effort: EffortLevel | undefined): void {
+export function applyEffort(
+  body: AnthropicRequest,
+  effort: EffortLevel | undefined,
+  reasoningMode?: string
+): void {
   if (!effort) {
     // Kiro 未给 effort（auto 档 / 老版本）→ 不加任何字段，让模型走默认，
     // 与 Kiro 原生 We7() 返回 undefined 的行为一致。
@@ -371,8 +377,10 @@ export function applyEffort(body: AnthropicRequest, effort: EffortLevel | undefi
     return;
   }
 
-  // 透传 Kiro 原生 effort：中转站原样转发给 Kiro 后端的 output_config.effort。
-  body.output_config = { effort };
+  // 透传 Kiro 原生 effort（+ GPT reasoning 模型的 mode）：中转站据此发 output_config.effort，
+  // 或把 output_config.{effort,mode} 映射为上游 reasoning.{mode,effort}。mode 仅 reasoning 模型
+  // 有意义，非 reasoning 模型中转站会忽略，故这里一并带上无害。
+  body.output_config = reasoningMode ? { effort, mode: reasoningMode } : { effort };
 
   // 变体模式（可选）：部分中转站用独立的 <model>-<effort> / -thinking 模型承载思考。
   if (mode === "auto" || mode === "modelVariant") {

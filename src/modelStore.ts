@@ -13,6 +13,10 @@ export interface RelayModel {
   effortSchemaPath?: string;
   /** 默认 effort 档位。 */
   defaultEffortLevel?: string;
+  /** 该模型支持的 reasoning.mode 档位（GPT 5.6：[standard, pro]）。仅 reasoning schema 模型有。 */
+  reasoningModes?: string[];
+  /** 默认 reasoning.mode（如 standard）。 */
+  defaultReasoningMode?: string;
   /** 最大输出 token（中转站透出，用于 CPS 模型列表 tokenLimits）。 */
   maxOutputTokens?: number;
 }
@@ -29,6 +33,10 @@ export interface EffortGroup {
   effortSchemaPath?: string;
   /** 官方默认 effort 档位。 */
   defaultEffortLevel?: string;
+  /** 官方 reasoning.mode 档位（GPT 5.6：[standard, pro]）。 */
+  reasoningModes?: string[];
+  /** 官方默认 reasoning.mode。 */
+  defaultReasoningMode?: string;
   /** 最大输出 token（中转站透出）。 */
   maxOutputTokens?: number;
 }
@@ -111,6 +119,19 @@ export async function fetchRelayModels(force = false): Promise<RelayModel[]> {
             : typeof (x as { defaultEffortLevel?: unknown }).defaultEffortLevel === "string"
             ? ((x as { defaultEffortLevel: string }).defaultEffortLevel)
             : undefined;
+        const reasoningModes = Array.isArray(x.reasoning_modes)
+          ? (x.reasoning_modes as unknown[]).filter((e): e is string => typeof e === "string")
+          : Array.isArray((x as { reasoningModes?: unknown }).reasoningModes)
+          ? ((x as { reasoningModes: unknown[] }).reasoningModes).filter(
+              (e): e is string => typeof e === "string"
+            )
+          : undefined;
+        const defaultReasoningMode =
+          typeof x.default_reasoning_mode === "string"
+            ? (x.default_reasoning_mode as string)
+            : typeof (x as { defaultReasoningMode?: unknown }).defaultReasoningMode === "string"
+            ? ((x as { defaultReasoningMode: string }).defaultReasoningMode)
+            : undefined;
         const maxOutRaw =
           (x.max_tokens as number) ??
           (x.max_output_tokens as number) ??
@@ -127,6 +148,8 @@ export async function fetchRelayModels(force = false): Promise<RelayModel[]> {
           effortLevels: effortLevels && effortLevels.length > 0 ? effortLevels : undefined,
           effortSchemaPath,
           defaultEffortLevel,
+          reasoningModes: reasoningModes && reasoningModes.length > 0 ? reasoningModes : undefined,
+          defaultReasoningMode,
           maxOutputTokens,
         } as RelayModel;
       });
@@ -221,6 +244,13 @@ export function groupModelsByEffort(models: RelayModel[]): EffortGroup[] {
       }
       if (m.defaultEffortLevel) {
         g.defaultEffortLevel = m.defaultEffortLevel;
+      }
+      // 官方 reasoning.mode 信息（GPT 5.6：standard/pro），供 CPS 广播 schema + effort.ts 校验
+      if (m.reasoningModes && m.reasoningModes.length > 0) {
+        g.reasoningModes = m.reasoningModes;
+      }
+      if (m.defaultReasoningMode) {
+        g.defaultReasoningMode = m.defaultReasoningMode;
       }
       if (m.maxOutputTokens && !g.maxOutputTokens) {
         g.maxOutputTokens = m.maxOutputTokens;

@@ -70,6 +70,17 @@ export function getThinkingBudget(): number {
 }
 
 /**
+ * 用户覆盖的 reasoning 思考模式（GPT 5.6：standard / pro）。
+ * - "auto"（默认）：不强制，透传 Kiro 请求里的 mode（若有），否则用中转站/上游默认（standard）。
+ * - "standard" / "pro"：强制该模式。仅对 reasoning 模型（GPT）生效；非 reasoning 模型中转站会忽略。
+ * 返回 undefined 表示 auto（不覆盖）。
+ */
+export function getReasoningModeOverride(): string | undefined {
+  const v = (cfg().get<string>("reasoningMode", "auto") || "auto").trim().toLowerCase();
+  return v === "standard" || v === "pro" ? v : undefined;
+}
+
+/**
  * Normalize the configured relay base URL.
  * Accepts forms like:
  *   https://host            -> https://host

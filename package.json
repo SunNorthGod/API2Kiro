@@ -2,7 +2,7 @@
   "name": "api2kiro",
   "displayName": "API2Kiro",
   "description": "把 Anthropic 端点格式的中转站 API 接入 Kiro：自定义中转地址与 Key、查询用量、监控缓存命中率。",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "publisher": "api2kiro",
   "license": "MIT",
   "repository": {
@@ -141,6 +141,16 @@
             "max": 24576
           },
           "description": "各思考档位对应的 thinking 预算（token），会被自动限制在 max_tokens 以内。仅在按预算映射时使用。"
+        },
+        "api2kiro.reasoningMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "standard",
+            "pro"
+          ],
+          "default": "auto",
+          "description": "GPT 5.6 系列（sol/terra/luna）的思考模式。auto：跟随 Kiro 请求或用上游默认（standard）；standard：标准思考；pro：专业思考（更深、更慢、更贵）。仅对 GPT reasoning 模型生效，其它模型忽略。"
         },
         "api2kiro.defaultModel": {
           "type": "string",

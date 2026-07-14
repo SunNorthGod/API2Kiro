@@ -12,6 +12,7 @@ esbuild.js
 kiro2cc-proxy/**
 _probe/**
 *.vsix
+*.zip
 .git/**
 package-lock.json
 opencode.jsonc

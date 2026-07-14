@@ -34,6 +34,10 @@ function contextWindowForModel(modelId: string): number {
   ) {
     return 1000000;
   }
+  // GPT 5.6 系列（sol/terra/luna）输入窗口 272K（对齐 Kiro 官方 ListAvailableModels）
+  if (m.includes("gpt")) {
+    return 272000;
+  }
   // 其余 Claude（Opus 4.5、Sonnet 4.5/4、Haiku 等）为 200K
   if (m.includes("opus") || m.includes("sonnet") || m.includes("haiku") || m.includes("claude")) {
     return 200000;

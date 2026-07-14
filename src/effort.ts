@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { cfg } from "./config";
+import { cfg, getReasoningModeOverride } from "./config";
 import { CwRequest } from "./cwTypes";
 import { EFFORT_LEVELS, EffortLevel } from "./modelStore";
 import { debug } from "./log";
@@ -110,6 +110,68 @@ export async function getSelectedEffort(req: CwRequest): Promise<EffortLevel | u
     const cached = effortCache.get(convId);
     debug("effort from conversation cache", cached);
     return cached;
+  }
+  return undefined;
+}
+
+// === Reasoning mode（GPT 5.6：standard / pro）===
+
+/** 宽松归一 mode：仅去空白转小写，不硬限枚举——由中转站按模型 schema 校验兜底，前向兼容新增档位。 */
+function normMode(x: unknown): string | undefined {
+  if (typeof x !== "string") {
+    return undefined;
+  }
+  const v = x.trim().toLowerCase();
+  return v.length > 0 ? v : undefined;
+}
+
+/** 提取 Kiro 请求里的 reasoning 模式（additionalModelRequestFields.reasoning.mode / output_config.mode）。 */
+export function modeFromRequest(req: CwRequest): string | undefined {
+  const cm = req?.conversationState?.currentMessage?.userInputMessage;
+  const candidates = [
+    cm?.userInputMessageContext?.additionalModelRequestFields,
+    cm?.additionalModelRequestFields,
+    req?.additionalModelRequestFields,
+    req?.conversationState?.additionalModelRequestFields,
+  ];
+  for (const fields of candidates) {
+    if (!fields || typeof fields !== "object") {
+      continue;
+    }
+    const f = fields as {
+      reasoning?: { mode?: unknown };
+      output_config?: { mode?: unknown };
+    };
+    const m = normMode(f.reasoning?.mode ?? f.output_config?.mode);
+    if (m) {
+      return m;
+    }
+  }
+  return undefined;
+}
+
+// mode 与 effort 同理：工具续跑轮可能省略，做 per-conversation 缓存避免中途丢失。
+const modeCache = new Map<string, string>();
+
+/**
+ * 解析请求的 reasoning 模式：配置覆盖（reasoningMode=standard/pro）优先；否则取请求内嵌值；
+ * 再退到本会话上一次的缓存值。返回 undefined 表示不指定（中转站/上游用默认 standard）。
+ */
+export function getSelectedMode(req: CwRequest): string | undefined {
+  const override = getReasoningModeOverride();
+  if (override) {
+    return override;
+  }
+  const convId = req?.conversationState?.conversationId || "";
+  const fromReq = modeFromRequest(req);
+  if (fromReq) {
+    if (convId) {
+      modeCache.set(convId, fromReq);
+    }
+    return fromReq;
+  }
+  if (convId && modeCache.has(convId)) {
+    return modeCache.get(convId);
   }
   return undefined;
 }

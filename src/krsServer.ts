@@ -6,7 +6,7 @@ import { EVENT_STREAM_CONTENT_TYPE, encodeException } from "./eventstream";
 import { writeEvent } from "./cwEvents";
 import { AnthropicStreamConverter } from "./anthropicStream";
 import { buildAnthropicRequest, applyEffort, conversationId, latestModelId, resolveModel } from "./translate";
-import { getSelectedEffort } from "./effort";
+import { getSelectedEffort, getSelectedMode } from "./effort";
 import { isIntentClassifierRequest, buildIntentClassifierResponse } from "./intentClassifier";
 import { requestUpstream, readBody } from "./upstream";
 import { PortHolder, OwnershipListener } from "./portBinder";
@@ -246,8 +246,9 @@ export class KrsProxyServer {
     }
 
     const effort = await getSelectedEffort(parsed);
+    const reasoningMode = getSelectedMode(parsed);
     const anthropicBody = buildAnthropicRequest(parsed);
-    applyEffort(anthropicBody, effort);
+    applyEffort(anthropicBody, effort, reasoningMode);
     const upstreamModel = anthropicBody.model;
     const targetUrl = resolveApiUrl("/messages");
     const headers: Record<string, string> = {
@@ -259,7 +260,7 @@ export class KrsProxyServer {
     };
 
     info(
-      `→ /messages model=${upstreamModel} (kiro=${kiroModel}${effort ? ", effort=" + effort : ""}) conv=${convId}`
+      `→ /messages model=${upstreamModel} (kiro=${kiroModel}${effort ? ", effort=" + effort : ""}${reasoningMode ? ", mode=" + reasoningMode : ""}) conv=${convId}`
     );
     debug("upstream request", { url: targetUrl, body: anthropicBody });
 

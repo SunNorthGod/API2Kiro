@@ -105,23 +105,44 @@ export class CpsProxyServer {
       }
 
       if (efforts.length > 0) {
-        model.additionalModelRequestFieldsSchema = {
-          type: "object",
-          properties: {
-            [schemaPath]: {
-              type: "object",
-              properties: {
-                effort: { type: "string", enum: efforts },
-              },
-            },
-          },
-        };
-        model.defaultEffortLevel =
+        const defaultEffort =
           g.defaultEffortLevel && efforts.includes(g.defaultEffortLevel)
             ? g.defaultEffortLevel
             : efforts.includes(DEFAULT_EFFORT_LEVEL)
             ? DEFAULT_EFFORT_LEVEL
             : efforts[0];
+
+        if (schemaPath === "reasoning") {
+          // GPT 5.6：reasoning.{mode?, effort}，additionalProperties:false（逐字对齐上游真实 schema，
+          // 让 Kiro 选择器识别 standard/pro 思考模式）。mode 仅当中转站透出 reasoningModes 时出现。
+          const reasoningProps: Record<string, unknown> = {};
+          if (g.reasoningModes && g.reasoningModes.length > 0) {
+            const defMode =
+              g.defaultReasoningMode && g.reasoningModes.includes(g.defaultReasoningMode)
+                ? g.defaultReasoningMode
+                : g.reasoningModes[0];
+            reasoningProps.mode = { type: "string", enum: g.reasoningModes, default: defMode };
+          }
+          reasoningProps.effort = { type: "string", enum: efforts, default: defaultEffort };
+          model.additionalModelRequestFieldsSchema = {
+            type: "object",
+            properties: { reasoning: { type: "object", properties: reasoningProps } },
+            additionalProperties: false,
+          };
+        } else {
+          model.additionalModelRequestFieldsSchema = {
+            type: "object",
+            properties: {
+              [schemaPath]: {
+                type: "object",
+                properties: {
+                  effort: { type: "string", enum: efforts },
+                },
+              },
+            },
+          };
+        }
+        model.defaultEffortLevel = defaultEffort;
       }
 
       return model;
