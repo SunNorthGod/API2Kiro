@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import { CONFIG_NS, getApiKey, getBaseUrl, isEnabled, resolveRootUrl } from "./config";
-import { maskKey } from "./log";
+import { getApiKey, getBaseUrl, isEnabled, resolveRootUrl, updateSetting } from "./config";
+import { maskKey, error } from "./log";
 import { fetchRelayUsage } from "./usage";
 import { fetchRelayModels } from "./modelStore";
 
@@ -43,7 +43,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async onMessage(msg: { type: string; [k: string]: unknown }): Promise<void> {
-    const conf = vscode.workspace.getConfiguration(CONFIG_NS);
     switch (msg.type) {
       case "ready":
         this.postAll();
@@ -51,23 +50,36 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case "saveConfig": {
         const baseUrl = String(msg.baseUrl ?? "").trim();
         const apiKey = String(msg.apiKey ?? "").trim();
-        await conf.update("baseUrl", baseUrl, vscode.ConfigurationTarget.Global);
+        const r1 = await updateSetting("baseUrl", baseUrl);
+        let r2: { settingsOk: boolean; error?: string } = { settingsOk: true };
         if (apiKey) {
-          await conf.update("apiKey", apiKey, vscode.ConfigurationTarget.Global);
+          r2 = await updateSetting("apiKey", apiKey);
         }
-        this.toast("ok", "已保存配置");
+        if (r1.settingsOk && r2.settingsOk) {
+          this.toast("ok", "已保存配置");
+        } else {
+          const detail = r1.error || r2.error || "未知错误";
+          error("保存配置写入 Kiro 设置失败(已本地兜底):", detail);
+          this.toast("error", "已本地保存,但写入 Kiro 设置失败:" + detail);
+        }
         this.postState();
         void this.refresh();
         break;
       }
-      case "clearKey":
-        await conf.update("apiKey", "", vscode.ConfigurationTarget.Global);
-        this.toast("ok", "已清除 API Key");
+      case "clearKey": {
+        const r = await updateSetting("apiKey", "");
+        this.toast(r.settingsOk ? "ok" : "error", r.settingsOk ? "已清除 API Key" : "清除失败:" + (r.error || "未知错误"));
         this.postState();
         break;
-      case "toggleEnabled":
-        await conf.update("enabled", !!msg.enabled, vscode.ConfigurationTarget.Global);
+      }
+      case "toggleEnabled": {
+        const r = await updateSetting("enabled", !!msg.enabled);
+        if (!r.settingsOk) {
+          error("切换启用状态写入 Kiro 设置失败(已本地兜底):", r.error || "");
+          this.toast("error", "已本地记录,但写入 Kiro 设置失败:" + (r.error || "未知错误"));
+        }
         break;
+      }
       case "refresh":
         void this.refresh();
         break;

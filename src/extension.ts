@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { CONFIG_NS, isEnabled, getApiKey, getBaseUrl, getPort, getCpsPort } from "./config";
+import { CONFIG_NS, isEnabled, getApiKey, getBaseUrl, getPort, getCpsPort, initConfig, updateSetting } from "./config";
 import { initLog, showLog, info, error } from "./log";
 import { KrsProxyServer } from "./krsServer";
 import { CpsProxyServer } from "./cpsServer";
@@ -16,6 +16,7 @@ let reloadPrompted = false;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   initLog();
+  initConfig(context);
   info("activating, version", context.extension.packageJSON.version);
 
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -182,7 +183,14 @@ function updateStatusBar(): void {
 }
 
 function registerCommands(context: vscode.ExtensionContext): void {
-  const conf = () => vscode.workspace.getConfiguration(CONFIG_NS);
+  const warnIfFailed = (r: { settingsOk: boolean; error?: string }) => {
+    if (!r.settingsOk) {
+      void vscode.window.showErrorMessage(
+        "API2Kiro 写入 Kiro 设置失败(已本地兜底):" + (r.error || "未知错误") +
+          "。若代理不生效,请检查用户 settings.json 是否可写、格式是否正确。"
+      );
+    }
+  };
 
   context.subscriptions.push(
     vscode.commands.registerCommand("api2kiro.focusSidebar", () => {
@@ -193,7 +201,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("api2kiro.openLog", () => showLog()),
     vscode.commands.registerCommand("api2kiro.toggleEnabled", async () => {
-      await conf().update("enabled", !isEnabled(), vscode.ConfigurationTarget.Global);
+      warnIfFailed(await updateSetting("enabled", !isEnabled()));
     }),
     vscode.commands.registerCommand("api2kiro.setBaseUrl", async () => {
       const value = await vscode.window.showInputBox({
@@ -203,7 +211,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
         ignoreFocusOut: true,
       });
       if (value !== undefined) {
-        await conf().update("baseUrl", value.trim(), vscode.ConfigurationTarget.Global);
+        warnIfFailed(await updateSetting("baseUrl", value.trim()));
         sidebar?.postAll();
       }
     }),
@@ -215,7 +223,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
         ignoreFocusOut: true,
       });
       if (value !== undefined) {
-        await conf().update("apiKey", value.trim(), vscode.ConfigurationTarget.Global);
+        warnIfFailed(await updateSetting("apiKey", value.trim()));
         sidebar?.postAll();
       }
     })

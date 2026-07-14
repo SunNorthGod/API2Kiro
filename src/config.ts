@@ -2,16 +2,66 @@ import * as vscode from "vscode";
 
 export const CONFIG_NS = "api2kiro";
 
+let extCtx: vscode.ExtensionContext | undefined;
+
+/** 由 activate 调用,注入扩展上下文,启用「settings.json 写入失败时」的本地兜底存储。 */
+export function initConfig(context: vscode.ExtensionContext): void {
+  extCtx = context;
+}
+
 export function cfg() {
   return vscode.workspace.getConfiguration(CONFIG_NS);
 }
 
+const FB_PREFIX = "fallback.";
+
+/**
+ * 读字符串配置:本地兜底若存在(说明之前写 settings.json 失败,兜底为用户最新意图)优先,
+ * 否则读 VS Code 设置。空字符串也算有效兜底值(用于「清除 Key」)。
+ */
+function readStr(key: string): string {
+  const fb = extCtx?.globalState.get<string>(FB_PREFIX + key);
+  if (fb !== undefined) {
+    return String(fb).trim();
+  }
+  return (cfg().get<string>(key, "") || "").trim();
+}
+
+/**
+ * 写入 api2kiro 配置:优先写 VS Code 全局设置(端点重定向等依赖它);写入抛错
+ * (settings.json 不可写/损坏/受限模式)时退回插件本地存储(globalState)兜底,
+ * 保证面板配置至少能持久化。返回 { settingsOk, error } 让调用方据此提示真实原因。
+ */
+export async function updateSetting(
+  key: string,
+  value: unknown
+): Promise<{ settingsOk: boolean; error?: string }> {
+  try {
+    await cfg().update(key, value, vscode.ConfigurationTarget.Global);
+    // 写设置成功后清掉旧兜底,避免兜底值盖过设置
+    if (extCtx && extCtx.globalState.get(FB_PREFIX + key) !== undefined) {
+      await extCtx.globalState.update(FB_PREFIX + key, undefined);
+    }
+    return { settingsOk: true };
+  } catch (e) {
+    const error = (e as Error)?.message || String(e);
+    if (extCtx) {
+      await extCtx.globalState.update(FB_PREFIX + key, value);
+    }
+    return { settingsOk: false, error };
+  }
+}
+
 export function isEnabled(): boolean {
+  const fb = extCtx?.globalState.get<boolean>(FB_PREFIX + "enabled");
+  if (typeof fb === "boolean") {
+    return fb;
+  }
   return cfg().get<boolean>("enabled", true);
 }
 
 export function getApiKey(): string {
-  return (cfg().get<string>("apiKey", "") || "").trim();
+  return readStr("apiKey");
 }
 
 export function getPort(): number {
@@ -89,7 +139,7 @@ export function getReasoningModeOverride(): string | undefined {
  * Returns "" when not configured.
  */
 export function getBaseUrl(): string {
-  let raw = (cfg().get<string>("baseUrl", "") || "").trim();
+  let raw = readStr("baseUrl");
   if (!raw) {
     return "";
   }
