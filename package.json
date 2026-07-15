@@ -2,7 +2,7 @@
   "name": "api2kiro",
   "displayName": "API2Kiro",
   "description": "把 Anthropic 端点格式的中转站 API 接入 Kiro：自定义中转地址与 Key、查询用量、监控缓存命中率。",
-  "version": "1.7.5",
+  "version": "1.7.6",
   "publisher": "api2kiro",
   "license": "MIT",
   "repository": {
@@ -176,6 +176,32 @@
           "type": "boolean",
           "default": false,
           "description": "把请求/响应写入调试日志文件（Key 会脱敏）。"
+        },
+        "api2kiro.mode": {
+          "type": "string",
+          "enum": ["kiro", "anthropic"],
+          "default": "kiro",
+          "description": "中转模式。kiro=深度兼容（走 kiro2cc-proxy，保留 Kiro 私有字段/effort/thinking 与计费显示）；anthropic=官方 Anthropic 直通（把 CW 翻成纯 Anthropic /v1/messages 发往下方官方地址，不注入私有字段、不显示计费）。切换后需重载窗口。"
+        },
+        "api2kiro.officialBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "官方 Anthropic 模式的地址（留空默认 https://ai.sunnorthgod.top:2053）。仅 mode=anthropic 时生效。"
+        },
+        "api2kiro.officialApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "官方 Anthropic 模式的 API Key。仅 mode=anthropic 时生效。"
+        },
+        "api2kiro.officialModelMapping": {
+          "type": "object",
+          "default": {},
+          "description": "官方模式下 Kiro 内部模型 ID → 官方地址模型 ID 的映射。留空则原样透传（Kiro 选择器展示的即为官方地址返回的模型，天然一一对应）。"
+        },
+        "api2kiro.officialDefaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "官方模式下映射表未命中时的兜底模型 ID。留空则透传原始 ID。"
         },
         "codewhisperer.config.krsEndpoints": {
           "type": [

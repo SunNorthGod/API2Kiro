@@ -57,6 +57,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
       }
     }
+    // 切换中转模式（深度兼容 / 官方 Anthropic）需重载窗口，Kiro 才会重新拉取模型列表。
+    if (e.affectsConfiguration(`${CONFIG_NS}.mode`) && !enableChanged && isEnabled()) {
+      promptReload("已切换中转模式");
+    }
     updateStatusBar();
     sidebar?.postAll();
   });

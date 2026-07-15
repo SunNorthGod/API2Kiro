@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { getApiKey, getBaseUrl, isEnabled, resolveRootUrl, updateSetting } from "./config";
+import { getApiKey, getBaseUrl, isEnabled, resolveRootUrl, updateSetting, getRelayMode } from "./config";
 import { maskKey, error } from "./log";
 import { fetchRelayUsage } from "./usage";
 import { fetchRelayModels } from "./modelStore";
@@ -48,12 +48,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.postAll();
         break;
       case "saveConfig": {
+        const official = getRelayMode() === "anthropic";
+        const urlKey = official ? "officialBaseUrl" : "baseUrl";
+        const keyKey = official ? "officialApiKey" : "apiKey";
         const baseUrl = String(msg.baseUrl ?? "").trim();
         const apiKey = String(msg.apiKey ?? "").trim();
-        const r1 = await updateSetting("baseUrl", baseUrl);
+        const r1 = await updateSetting(urlKey, baseUrl);
         let r2: { settingsOk: boolean; error?: string } = { settingsOk: true };
         if (apiKey) {
-          r2 = await updateSetting("apiKey", apiKey);
+          r2 = await updateSetting(keyKey, apiKey);
         }
         if (r1.settingsOk && r2.settingsOk) {
           this.toast("ok", "已保存配置");
@@ -67,9 +70,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "clearKey": {
-        const r = await updateSetting("apiKey", "");
+        const keyKey = getRelayMode() === "anthropic" ? "officialApiKey" : "apiKey";
+        const r = await updateSetting(keyKey, "");
         this.toast(r.settingsOk ? "ok" : "error", r.settingsOk ? "已清除 API Key" : "清除失败:" + (r.error || "未知错误"));
         this.postState();
+        break;
+      }
+      case "setMode": {
+        const mode = msg.mode === "anthropic" ? "anthropic" : "kiro";
+        const r = await updateSetting("mode", mode);
+        if (!r.settingsOk) {
+          this.toast("error", "切换模式失败:" + (r.error || "未知错误"));
+        }
+        this.postAll();
         break;
       }
       case "toggleEnabled": {
@@ -109,6 +122,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this.post({
       type: "state",
       enabled: isEnabled(),
+      mode: getRelayMode(),
       hasKey: !!key,
       maskedKey: maskKey(key),
       baseUrl: getBaseUrl(),
@@ -129,6 +143,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       .then((models) => this.post({ type: "models", count: Array.isArray(models) ? models.length : null }))
       .catch(() => this.post({ type: "models", count: null }));
 
+    if (getRelayMode() === "anthropic") {
+      // 官方模式不查 kiro2cc 计费；余额/用量在 sub2api 自己的面板看
+      this.post({ type: "usage", ok: false, official: true });
+      return;
+    }
     const usage = await fetchRelayUsage().catch((e) => ({ ok: false, errorMessage: (e as Error).message }));
     this.post({ type: "usage", ...usage });
   }
@@ -235,7 +254,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   </div>
 
   <div class="card">
-    <label>中转站地址（Anthropic 格式）</label>
+    <label>中转模式</label>
+    <div class="btns">
+      <button class="btn btn-ghost" id="modeKiro" style="flex:1;">深度兼容 (Kiro)</button>
+      <button class="btn btn-ghost" id="modeOfficial" style="flex:1;">官方 Anthropic</button>
+    </div>
+    <div class="muted" id="modeHint" style="margin-top:6px;"></div>
+  </div>
+
+  <div class="card">
+    <label id="baseUrlLabel">中转站地址（Anthropic 格式）</label>
     <input type="text" id="baseUrl" placeholder="https://your-relay.com/v1" autocomplete="off" spellcheck="false">
     <label>API Key</label>
     <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off" spellcheck="false">
@@ -246,7 +274,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     </div>
   </div>
 
-  <div class="card">
+  <div class="card hidden" id="officialNote">
+    <div class="muted">官方 Anthropic 模式：已直连 <span id="officialUrlNote"></span>。用量与余额请在该中转站自己的面板查看。</div>
+  </div>
+
+  <div class="card" id="usageCard">
     <div class="cardhead">
       <div style="display:flex;align-items:center;gap:8px;">
         <h3>用量</h3>
@@ -283,7 +315,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="cacheCard">
     <div class="cardhead">
       <div style="display:flex;align-items:center;gap:8px;">
         <h3>缓存命中率</h3>
@@ -329,6 +361,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   $('log').addEventListener('click', () => vscode.postMessage({ type: 'openLog' }));
   $('usageWeb').addEventListener('click', () => vscode.postMessage({ type: 'openUsageWeb' }));
   $('enable').addEventListener('change', (e) => vscode.postMessage({ type: 'toggleEnabled', enabled: e.target.checked }));
+  $('modeKiro').addEventListener('click', () => vscode.postMessage({ type: 'setMode', mode: 'kiro' }));
+  $('modeOfficial').addEventListener('click', () => vscode.postMessage({ type: 'setMode', mode: 'anthropic' }));
 
   function fmtDate(iso) {
     const d = new Date(iso); if (isNaN(d.getTime())) return iso;
@@ -344,13 +378,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (!m.enabled) { b.textContent = '已关闭'; b.className = 'badge badge-off'; }
       else if (!m.hasKey || !m.baseUrl) { b.textContent = '未配置'; b.className = 'badge badge-off'; }
       else { b.textContent = '运行中'; b.className = 'badge badge-on'; }
-      if (m.baseUrl) $('baseUrl').value = m.baseUrl;
+      const official = m.mode === 'anthropic';
+      $('modeKiro').className = 'btn ' + (official ? 'btn-ghost' : 'btn-primary');
+      $('modeOfficial').className = 'btn ' + (official ? 'btn-primary' : 'btn-ghost');
+      $('baseUrlLabel').textContent = official ? '官方 Anthropic 地址（默认 sub2api）' : '中转站地址（Anthropic 格式）';
+      $('baseUrl').placeholder = official ? 'https://ai.sunnorthgod.top:2053' : 'https://your-relay.com/v1';
+      $('modeHint').textContent = official
+        ? '把 Kiro 请求翻成纯 Anthropic 直连官方地址（默认 sub2api），不注入 Kiro 私有字段、不显示计费。'
+        : '走 kiro2cc-proxy，保留 Kiro 私有字段 / effort / 思考与计费显示。';
+      show($('usageCard'), !official);
+      show($('cacheCard'), !official);
+      show($('officialNote'), official);
+      if (official) $('officialUrlNote').textContent = m.baseUrl || '';
+      $('baseUrl').value = m.baseUrl || '';
       $('keyHint').textContent = m.hasKey ? ('已配置 Key：' + m.maskedKey) : '尚未配置 Key';
       $('ports').textContent = 'KRS ' + m.krsPort + ' / CPS ' + m.cpsPort;
-      show($('usageWeb'), !!m.usageWebUrl);
+      show($('usageWeb'), !official && !!m.usageWebUrl);
     } else if (m.type === 'usage') {
       $('refresh').innerHTML = '&#8635;';
       $('refreshCache').innerHTML = '&#8635;';
+      if (m.official) { return; }
       const bad = !m.ok;
       show($('usageError'), bad);
       show($('usageBody'), !bad);

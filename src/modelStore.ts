@@ -1,4 +1,4 @@
-import { getApiKey, resolveApiUrl } from "./config";
+import { getApiKey, resolveApiUrl, getRelayMode } from "./config";
 import { requestUpstream, readBody } from "./upstream";
 import { debug, error } from "./log";
 
@@ -48,6 +48,7 @@ export const EFFORT_SUFFIX_RE = /-(low|medium|high|xhigh|max)$/i;
 
 let modelCache: RelayModel[] = [];
 let modelCacheTime = 0;
+let modelCacheMode = "";
 const MODEL_TTL_MS = 60000;
 
 function parseContextWindow(m: Record<string, unknown>): number {
@@ -65,7 +66,8 @@ function parseContextWindow(m: Record<string, unknown>): number {
 /** Fetch and normalize the relay's model list (cached for 60s). */
 export async function fetchRelayModels(force = false): Promise<RelayModel[]> {
   const now = Date.now();
-  if (!force && modelCache.length > 0 && now - modelCacheTime < MODEL_TTL_MS) {
+  const mode = getRelayMode();
+  if (!force && modelCache.length > 0 && modelCacheMode === mode && now - modelCacheTime < MODEL_TTL_MS) {
     return modelCache;
   }
   const apiKey = getApiKey();
@@ -77,7 +79,12 @@ export async function fetchRelayModels(force = false): Promise<RelayModel[]> {
     const res = await requestUpstream(
       "GET",
       url,
-      { "x-api-key": apiKey, "anthropic-version": "2023-06-01", Accept: "application/json" },
+      {
+        "x-api-key": apiKey,
+        Authorization: "Bearer " + apiKey,
+        "anthropic-version": "2023-06-01",
+        Accept: "application/json",
+      },
       undefined,
       15000
     );
@@ -157,6 +164,7 @@ export async function fetchRelayModels(force = false): Promise<RelayModel[]> {
     if (models.length > 0) {
       modelCache = models;
       modelCacheTime = Date.now();
+      modelCacheMode = mode;
     }
     debug("relay models fetched", { count: models.length });
   } catch (e) {

@@ -77,8 +77,26 @@ export function isEnabled(): boolean {
   return cfg().get<boolean>("enabled", true);
 }
 
-export function getApiKey(): string {
+/** 中转模式：kiro=深度兼容(kiro2cc-proxy)；anthropic=官方 Anthropic 直通(默认 sub2api)。 */
+export function getRelayMode(): "kiro" | "anthropic" {
+  const fb = extCtx?.globalState.get<string>(FB_PREFIX + "mode");
+  const raw = (fb !== undefined ? fb : cfg().get<string>("mode", "kiro")) || "kiro";
+  return raw === "anthropic" ? "anthropic" : "kiro";
+}
+
+/** 深度兼容模式的中转站 Key。 */
+export function getKiroApiKey(): string {
   return readStr("apiKey");
+}
+
+/** 官方 Anthropic 模式的 Key。 */
+export function getOfficialApiKey(): string {
+  return readStr("officialApiKey");
+}
+
+/** 当前生效的 Key（按模式）。 */
+export function getApiKey(): string {
+  return getRelayMode() === "anthropic" ? getOfficialApiKey() : getKiroApiKey();
 }
 
 export function getPort(): number {
@@ -102,11 +120,13 @@ export function getInterceptIntentClassifier(): boolean {
 }
 
 export function getModelMapping(): Record<string, string> {
-  return cfg().get<Record<string, string>>("modelMapping", {}) || {};
+  const key = getRelayMode() === "anthropic" ? "officialModelMapping" : "modelMapping";
+  return cfg().get<Record<string, string>>(key, {}) || {};
 }
 
 export function getDefaultModel(): string {
-  return (cfg().get<string>("defaultModel", "") || "").trim();
+  const key = getRelayMode() === "anthropic" ? "officialDefaultModel" : "defaultModel";
+  return (cfg().get<string>(key, "") || "").trim();
 }
 
 export function getUsagePath(): string {
@@ -155,15 +175,32 @@ export function getReasoningModeOverride(): string | undefined {
  *   https://host:8443/v1/   -> https://host:8443/v1
  * Returns "" when not configured.
  */
-export function getBaseUrl(): string {
-  let raw = readStr("baseUrl");
+const DEFAULT_OFFICIAL_BASE_URL = "https://ai.sunnorthgod.top:2053";
+
+function normalizeUrl(raw: string): string {
   if (!raw) {
     return "";
   }
-  if (!/^https?:\/\//i.test(raw)) {
-    raw = "https://" + raw;
+  let r = raw;
+  if (!/^https?:\/\//i.test(r)) {
+    r = "https://" + r;
   }
-  return raw.replace(/\/+$/, "");
+  return r.replace(/\/+$/, "");
+}
+
+/** 深度兼容模式的中转站地址（Anthropic 格式）。 */
+export function getKiroBaseUrl(): string {
+  return normalizeUrl(readStr("baseUrl"));
+}
+
+/** 官方 Anthropic 模式地址（留空回落到默认 sub2api 公网地址）。 */
+export function getOfficialBaseUrl(): string {
+  return normalizeUrl(readStr("officialBaseUrl") || DEFAULT_OFFICIAL_BASE_URL);
+}
+
+/** 当前生效的中转站地址（按模式）。 */
+export function getBaseUrl(): string {
+  return getRelayMode() === "anthropic" ? getOfficialBaseUrl() : getKiroBaseUrl();
 }
 
 /**

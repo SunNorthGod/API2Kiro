@@ -16,6 +16,7 @@ import {
   getInterceptIntentClassifier,
   resolveApiUrl,
   getBaseUrl,
+  getRelayMode,
 } from "./config";
 import { debug, error, info } from "./log";
 
@@ -245,10 +246,19 @@ export class KrsProxyServer {
       return;
     }
 
-    const effort = await getSelectedEffort(parsed);
-    const reasoningMode = getSelectedMode(parsed);
+    const official = getRelayMode() === "anthropic";
     const anthropicBody = buildAnthropicRequest(parsed);
-    applyEffort(anthropicBody, effort, reasoningMode);
+    let effortInfo = "";
+    if (official) {
+      // 官方 Anthropic 模式：纯透传，剥掉 Kiro 私有 / 思考字段（output_config 私有；thinking 交给上游默认）
+      delete anthropicBody.thinking;
+      delete anthropicBody.output_config;
+    } else {
+      const effort = await getSelectedEffort(parsed);
+      const reasoningMode = getSelectedMode(parsed);
+      applyEffort(anthropicBody, effort, reasoningMode);
+      effortInfo = `${effort ? ", effort=" + effort : ""}${reasoningMode ? ", mode=" + reasoningMode : ""}`;
+    }
     const upstreamModel = anthropicBody.model;
     const targetUrl = resolveApiUrl("/messages");
     const headers: Record<string, string> = {
@@ -258,9 +268,13 @@ export class KrsProxyServer {
       Accept: "text/event-stream",
       "X-Client": "api2kiro/" + (this.context.extension.packageJSON.version || "0.0.0"),
     };
+    if (official) {
+      // sub2api 等官方兼容网关通常认 Authorization: Bearer（同时保留 x-api-key 双保险）
+      headers["Authorization"] = "Bearer " + apiKey;
+    }
 
     info(
-      `→ /messages model=${upstreamModel} (kiro=${kiroModel}${effort ? ", effort=" + effort : ""}${reasoningMode ? ", mode=" + reasoningMode : ""}) conv=${convId}`
+      `→ /messages [${official ? "official" : "kiro"}] model=${upstreamModel} (kiro=${kiroModel}${effortInfo}) conv=${convId}`
     );
     debug("upstream request", { url: targetUrl, body: anthropicBody });
 

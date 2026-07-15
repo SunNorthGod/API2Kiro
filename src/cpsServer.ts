@@ -1,6 +1,6 @@
 import * as http from "http";
 import { PortHolder, OwnershipListener } from "./portBinder";
-import { isEnabled } from "./config";
+import { isEnabled, getRelayMode } from "./config";
 import { debug, error, info } from "./log";
 import { PROXY_ID_PATH } from "./krsServer";
 import {
@@ -67,6 +67,7 @@ export class CpsProxyServer {
     const relay = await fetchRelayModels(false);
     const groups = groupModelsByEffort(relay);
     const mode = getEffortMode();
+    const official = getRelayMode() === "anthropic";
 
     const models: CpsModel[] = groups.map((g) => {
       const model: CpsModel = {
@@ -93,7 +94,9 @@ export class CpsProxyServer {
       // 3) 最后（通用中转站无 effort 信息时）auto/thinkingBudget 兜底暴露全档位。
       let efforts: string[] = [];
       let schemaPath = "output_config";
-      if (g.nativeEffortLevels && g.nativeEffortLevels.length > 0) {
+      if (official) {
+        // 官方 Anthropic 模式：不暴露 Kiro effort/reasoning 档位（sub2api 为纯模型，交给上游默认）
+      } else if (g.nativeEffortLevels && g.nativeEffortLevels.length > 0) {
         efforts = g.nativeEffortLevels;
         if (g.effortSchemaPath) {
           schemaPath = g.effortSchemaPath;
