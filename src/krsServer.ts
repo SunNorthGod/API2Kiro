@@ -1,7 +1,7 @@
 import * as http from "http";
 import * as vscode from "vscode";
 import { StringDecoder } from "string_decoder";
-import { CwRequest, CwEvent } from "./cwTypes";
+import { CwRequest } from "./cwTypes";
 import { EVENT_STREAM_CONTENT_TYPE, encodeException } from "./eventstream";
 import { writeEvent } from "./cwEvents";
 import { AnthropicStreamConverter } from "./anthropicStream";
@@ -358,97 +358,45 @@ export class KrsProxyServer {
         return;
       }
 
-      // 3) 2xx：流式转换（内部缓冲，首个内容事件前不落客户端）
-      const r = await this.pumpStream(res, upstream.body, convId, modelId);
-      if (r.clientClosed) {
-        return; // 客户端已断开
-      }
-      if (r.committed) {
-        return; // 已向客户端输出内容(完整或部分)，pumpStream 已收尾
-      }
-      // 未 committed：客户端还没收到任何内容 → 流在吐正文前就断了/空响应，可重试
-      lastReason = "流在输出内容前中断";
-      if (attempt < maxAttempts) {
-        continue;
-      }
-      // 重试用尽仍未拿到内容 → 给客户端一个干净的错误
+      // 3) 2xx：正常流式回传。一旦开始流就不再重试，也不改变原有流式行为。
       this.beginEventStream(res);
-      writeEvent(res, { messageMetadataEvent: { conversationId: convId } });
-      writeEvent(res, {
-        assistantResponseEvent: {
-          content: "❌ 与中转站的连接多次中断，未能获取回复，请重试。",
-          modelId,
-        },
-      });
-      res.write(encodeException("InternalServerException", { message: "upstream interrupted after retries" }));
-      res.end();
+      await this.pumpStream(res, upstream.body, convId, modelId);
       return;
     }
   }
 
-  /**
-   * Read the Anthropic SSE stream, convert each event, and write to Kiro.
-   *
-   * 关键：首个「内容事件」(assistantResponseEvent 正文 / reasoningContentEvent 思考 /
-   * toolUseEvent) 到达前，把事件(如 messageMetadataEvent)缓冲、不写客户端，也不发响应头
-   * (beginEventStream 延迟到 commit)。这样若流在吐出内容前中断，客户端毫无察觉，可由
-   * streamWithRetry 透明重发。返回:
-   *   - committed: 是否已向客户端提交(发过响应头/写过事件)
-   *   - ok:        是否正常完成(收到内容并自然结束)
-   *   - clientClosed: 客户端是否中途断开
-   */
+  /** Read the Anthropic SSE stream, convert each event, and write to Kiro. */
   private pumpStream(
     res: http.ServerResponse,
     body: http.IncomingMessage,
     convId: string,
     modelId: string
-  ): Promise<{ committed: boolean; ok: boolean; clientClosed: boolean }> {
-    return new Promise((resolve) => {
+  ): Promise<void> {
+    return new Promise<void>((resolve) => {
       const converter = new AnthropicStreamConverter(convId, modelId);
       const decoder = new StringDecoder("utf8");
       let buffer = "";
       let clientClosed = false;
       let finished = false;
-      let committed = false;
-      const pending: CwEvent[] = [];
 
-      const isContentEvent = (ev: CwEvent): boolean =>
-        !!(
-          (ev.assistantResponseEvent && ev.assistantResponseEvent.content) ||
-          ev.reasoningContentEvent ||
-          ev.toolUseEvent
-        );
-
-      const commit = () => {
-        if (committed) {
-          return;
-        }
-        committed = true;
-        this.beginEventStream(res);
-        for (const ev of pending) {
-          writeEvent(res, ev);
-        }
-        pending.length = 0;
-      };
-
-      const emit = (ev: CwEvent) => {
-        if (committed) {
-          writeEvent(res, ev);
-          return;
-        }
-        pending.push(ev);
-        if (isContentEvent(ev)) {
-          commit();
-        }
-      };
-
-      const settle = (ok: boolean) => {
+      const done = () => {
         if (finished) {
           return;
         }
         finished = true;
         res.removeListener("close", onClientClose);
-        resolve({ committed, ok, clientClosed });
+        try {
+          if (!clientClosed && !res.writableEnded) {
+            for (const ev of converter.flush()) {
+              writeEvent(res, ev);
+            }
+            res.end();
+          }
+        } catch {
+          /* ignore */
+        }
+        debug("upstream usage", converter.usage);
+        resolve();
       };
 
       const onClientClose = () => {
@@ -458,7 +406,7 @@ export class KrsProxyServer {
         } catch {
           /* ignore */
         }
-        settle(false);
+        done();
       };
       res.on("close", onClientClose);
 
@@ -476,23 +424,9 @@ export class KrsProxyServer {
             if (clientClosed) {
               return;
             }
-            emit(ev);
-          }
-        }
-      };
-
-      const finalizeCommitted = () => {
-        try {
-          for (const ev of converter.flush()) {
             writeEvent(res, ev);
           }
-          if (!res.writableEnded) {
-            res.end();
-          }
-        } catch {
-          /* ignore */
         }
-        debug("upstream usage", converter.usage);
       };
 
       body.on("data", (chunk: Buffer) => {
@@ -514,31 +448,12 @@ export class KrsProxyServer {
         } catch {
           /* ignore */
         }
-        if (clientClosed) {
-          return;
-        }
-        if (committed) {
-          finalizeCommitted();
-          settle(true);
-        } else {
-          // 整条流结束却没吐出任何内容 → 视为失败(可重试)，不碰 res
-          settle(false);
-        }
+        done();
       });
 
       body.on("error", (e) => {
         error("upstream stream error:", (e as Error).message);
-        if (clientClosed) {
-          return;
-        }
-        if (committed) {
-          // 已向客户端输出部分内容，无法重试；尽力收尾
-          finalizeCommitted();
-          settle(false);
-        } else {
-          // 尚未向客户端输出 → 可重试，保持 res 原样
-          settle(false);
-        }
+        done();
       });
     });
   }
