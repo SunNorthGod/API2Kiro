@@ -119,6 +119,22 @@ export function getInterceptIntentClassifier(): boolean {
   return cfg().get<boolean>("interceptIntentClassifier", true);
 }
 
+/** 是否启用「上游流中断自动重试」（流断且尚未向客户端吐出任何内容时透明重发）。 */
+export function getAutoRetry(): boolean {
+  const fb = extCtx?.globalState.get<boolean>(FB_PREFIX + "autoRetry");
+  if (typeof fb === "boolean") {
+    return fb;
+  }
+  return cfg().get<boolean>("autoRetry", true);
+}
+
+/** 自动重试的最大重试次数（不含首次尝试），钳制在 0..5。 */
+export function getMaxRetries(): number {
+  const fb = extCtx?.globalState.get<number>(FB_PREFIX + "maxRetries");
+  const raw = typeof fb === "number" ? fb : cfg().get<number>("maxRetries", 2);
+  return Math.max(0, Math.min(5, Math.floor(raw || 0)));
+}
+
 export function getModelMapping(): Record<string, string> {
   const key = getRelayMode() === "anthropic" ? "officialModelMapping" : "modelMapping";
   return cfg().get<Record<string, string>>(key, {}) || {};

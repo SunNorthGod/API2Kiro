@@ -1,7 +1,7 @@
 import * as http from "http";
 import * as vscode from "vscode";
 import { StringDecoder } from "string_decoder";
-import { CwRequest } from "./cwTypes";
+import { CwRequest, CwEvent } from "./cwTypes";
 import { EVENT_STREAM_CONTENT_TYPE, encodeException } from "./eventstream";
 import { writeEvent } from "./cwEvents";
 import { AnthropicStreamConverter } from "./anthropicStream";
@@ -17,6 +17,8 @@ import {
   resolveApiUrl,
   getBaseUrl,
   getRelayMode,
+  getAutoRetry,
+  getMaxRetries,
 } from "./config";
 import { debug, error, info } from "./log";
 
@@ -278,82 +280,175 @@ export class KrsProxyServer {
     );
     debug("upstream request", { url: targetUrl, body: anthropicBody });
 
-    let upstream;
-    try {
-      upstream = await requestUpstream("POST", targetUrl, headers, JSON.stringify(anthropicBody));
-    } catch (e) {
-      error("upstream fetch failed:", (e as Error).message);
-      res.writeHead(502, {
-        "Content-Type": "application/json",
-        "x-amzn-errortype": "InternalServerException",
-      });
-      res.end(
-        JSON.stringify({
-          __type: "InternalServerException",
-          message: "无法连接中转站：" + (e as Error).message,
-        })
-      );
-      return;
-    }
+    await this.streamWithRetry(
+      res,
+      targetUrl,
+      headers,
+      JSON.stringify(anthropicBody),
+      convId,
+      upstreamModel
+    );
+  }
 
-    if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
-      const errText = await readBody(upstream.body);
-      error(`upstream ${upstream.statusCode}:`, errText.slice(0, 300));
-      // Surface as event-stream exception so Kiro shows the message inline.
+  /**
+   * 发起上游请求并流式转换回 Kiro；在「尚未向客户端吐出任何内容」时对连接失败 /
+   * 可重试状态码(5xx/429) / 流中途中断透明重试。一旦已开始向客户端输出正文/思考/工具
+   * (committed)，则不再重试(避免重复内容)，尽力收尾。
+   */
+  private async streamWithRetry(
+    res: http.ServerResponse,
+    targetUrl: string,
+    headers: Record<string, string>,
+    bodyStr: string,
+    convId: string,
+    modelId: string
+  ): Promise<void> {
+    const maxAttempts = getAutoRetry() ? getMaxRetries() + 1 : 1;
+    let lastReason = "";
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) {
+        const backoff = Math.min(300 * (attempt - 1), 1500);
+        info(`↻ 自动重试 ${attempt}/${maxAttempts} (${backoff}ms后) conv=${convId} 原因=${lastReason}`);
+        await new Promise((r) => setTimeout(r, backoff));
+      }
+
+      // 1) 发起上游请求（连接失败可重试）
+      let upstream;
+      try {
+        upstream = await requestUpstream("POST", targetUrl, headers, bodyStr);
+      } catch (e) {
+        lastReason = "连接失败: " + (e as Error).message;
+        error("upstream fetch failed:", (e as Error).message);
+        if (attempt < maxAttempts) {
+          continue;
+        }
+        res.writeHead(502, {
+          "Content-Type": "application/json",
+          "x-amzn-errortype": "InternalServerException",
+        });
+        res.end(
+          JSON.stringify({
+            __type: "InternalServerException",
+            message: "无法连接中转站：" + (e as Error).message,
+          })
+        );
+        return;
+      }
+
+      // 2) 非 2xx：5xx/429 可重试；其余(4xx)直接透传给客户端
+      if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
+        const errText = await readBody(upstream.body);
+        error(`upstream ${upstream.statusCode}:`, errText.slice(0, 300));
+        const retryable = upstream.statusCode >= 500 || upstream.statusCode === 429;
+        if (retryable && attempt < maxAttempts) {
+          lastReason = `上游 ${upstream.statusCode}`;
+          continue;
+        }
+        this.beginEventStream(res);
+        writeEvent(res, { messageMetadataEvent: { conversationId: convId } });
+        writeEvent(res, {
+          assistantResponseEvent: {
+            content: `❌ 上游返回 ${upstream.statusCode}：\n\n${errText.slice(0, 800)}`,
+            modelId,
+          },
+        });
+        res.write(encodeException("InternalServerException", { message: `Upstream ${upstream.statusCode}` }));
+        res.end();
+        return;
+      }
+
+      // 3) 2xx：流式转换（内部缓冲，首个内容事件前不落客户端）
+      const r = await this.pumpStream(res, upstream.body, convId, modelId);
+      if (r.clientClosed) {
+        return; // 客户端已断开
+      }
+      if (r.committed) {
+        return; // 已向客户端输出内容(完整或部分)，pumpStream 已收尾
+      }
+      // 未 committed：客户端还没收到任何内容 → 流在吐正文前就断了/空响应，可重试
+      lastReason = "流在输出内容前中断";
+      if (attempt < maxAttempts) {
+        continue;
+      }
+      // 重试用尽仍未拿到内容 → 给客户端一个干净的错误
       this.beginEventStream(res);
       writeEvent(res, { messageMetadataEvent: { conversationId: convId } });
       writeEvent(res, {
         assistantResponseEvent: {
-          content: `❌ 上游返回 ${upstream.statusCode}：\n\n${errText.slice(0, 800)}`,
-          modelId: upstreamModel,
+          content: "❌ 与中转站的连接多次中断，未能获取回复，请重试。",
+          modelId,
         },
       });
-      res.write(
-        encodeException("InternalServerException", {
-          message: `Upstream ${upstream.statusCode}`,
-        })
-      );
+      res.write(encodeException("InternalServerException", { message: "upstream interrupted after retries" }));
       res.end();
       return;
     }
-
-    // Stream and translate.
-    this.beginEventStream(res);
-    await this.pumpStream(res, upstream.body, convId, upstreamModel);
   }
 
-  /** Read the Anthropic SSE stream, convert each event, and write to Kiro. */
+  /**
+   * Read the Anthropic SSE stream, convert each event, and write to Kiro.
+   *
+   * 关键：首个「内容事件」(assistantResponseEvent 正文 / reasoningContentEvent 思考 /
+   * toolUseEvent) 到达前，把事件(如 messageMetadataEvent)缓冲、不写客户端，也不发响应头
+   * (beginEventStream 延迟到 commit)。这样若流在吐出内容前中断，客户端毫无察觉，可由
+   * streamWithRetry 透明重发。返回:
+   *   - committed: 是否已向客户端提交(发过响应头/写过事件)
+   *   - ok:        是否正常完成(收到内容并自然结束)
+   *   - clientClosed: 客户端是否中途断开
+   */
   private pumpStream(
     res: http.ServerResponse,
     body: http.IncomingMessage,
     convId: string,
     modelId: string
-  ): Promise<void> {
-    return new Promise<void>((resolve) => {
+  ): Promise<{ committed: boolean; ok: boolean; clientClosed: boolean }> {
+    return new Promise((resolve) => {
       const converter = new AnthropicStreamConverter(convId, modelId);
       const decoder = new StringDecoder("utf8");
       let buffer = "";
       let clientClosed = false;
       let finished = false;
+      let committed = false;
+      const pending: CwEvent[] = [];
 
-      const done = () => {
+      const isContentEvent = (ev: CwEvent): boolean =>
+        !!(
+          (ev.assistantResponseEvent && ev.assistantResponseEvent.content) ||
+          ev.reasoningContentEvent ||
+          ev.toolUseEvent
+        );
+
+      const commit = () => {
+        if (committed) {
+          return;
+        }
+        committed = true;
+        this.beginEventStream(res);
+        for (const ev of pending) {
+          writeEvent(res, ev);
+        }
+        pending.length = 0;
+      };
+
+      const emit = (ev: CwEvent) => {
+        if (committed) {
+          writeEvent(res, ev);
+          return;
+        }
+        pending.push(ev);
+        if (isContentEvent(ev)) {
+          commit();
+        }
+      };
+
+      const settle = (ok: boolean) => {
         if (finished) {
           return;
         }
         finished = true;
         res.removeListener("close", onClientClose);
-        try {
-          if (!clientClosed && !res.writableEnded) {
-            for (const ev of converter.flush()) {
-              writeEvent(res, ev);
-            }
-            res.end();
-          }
-        } catch {
-          /* ignore */
-        }
-        debug("upstream usage", converter.usage);
-        resolve();
+        resolve({ committed, ok, clientClosed });
       };
 
       const onClientClose = () => {
@@ -363,7 +458,7 @@ export class KrsProxyServer {
         } catch {
           /* ignore */
         }
-        done();
+        settle(false);
       };
       res.on("close", onClientClose);
 
@@ -381,9 +476,23 @@ export class KrsProxyServer {
             if (clientClosed) {
               return;
             }
-            writeEvent(res, ev);
+            emit(ev);
           }
         }
+      };
+
+      const finalizeCommitted = () => {
+        try {
+          for (const ev of converter.flush()) {
+            writeEvent(res, ev);
+          }
+          if (!res.writableEnded) {
+            res.end();
+          }
+        } catch {
+          /* ignore */
+        }
+        debug("upstream usage", converter.usage);
       };
 
       body.on("data", (chunk: Buffer) => {
@@ -405,12 +514,31 @@ export class KrsProxyServer {
         } catch {
           /* ignore */
         }
-        done();
+        if (clientClosed) {
+          return;
+        }
+        if (committed) {
+          finalizeCommitted();
+          settle(true);
+        } else {
+          // 整条流结束却没吐出任何内容 → 视为失败(可重试)，不碰 res
+          settle(false);
+        }
       });
 
       body.on("error", (e) => {
         error("upstream stream error:", (e as Error).message);
-        done();
+        if (clientClosed) {
+          return;
+        }
+        if (committed) {
+          // 已向客户端输出部分内容，无法重试；尽力收尾
+          finalizeCommitted();
+          settle(false);
+        } else {
+          // 尚未向客户端输出 → 可重试，保持 res 原样
+          settle(false);
+        }
       });
     });
   }
